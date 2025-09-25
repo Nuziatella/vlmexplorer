@@ -54,6 +54,12 @@ class ModelsPageMixin:
         self.local_model_indicator.setPlaceholderText("No local model selected")
         form_layout.addRow("", self.local_model_indicator)
 
+        # Browse community models from Hugging Face
+        self.browse_models_btn = QPushButton("🔍 Browse HF Models")
+        self.browse_models_btn.setToolTip("Fetch popular models for the selected task")
+        self.browse_models_btn.clicked.connect(self.browse_hf_models)
+        form_layout.addRow("", self.browse_models_btn)
+
         # Task selection is configured on the Configuration page to avoid duplicate widgets.
 
         layout.addLayout(form_layout)
