@@ -251,22 +251,20 @@ class VLMApp(QMainWindow):
         self.screens_combo.addItems(["One Screen", "Two Screens"])
         self.screens_combo.currentTextChanged.connect(self.on_screens_changed)
         
-        # Server control
-        self.server_btn = QPushButton("🚀 Start Server")
-        self.server_btn.setToolTip("Start FastAPI server for Pokémon app integration")
-        self.server_btn.clicked.connect(self.toggle_server)
-        
         toolbar.addWidget(model_label)
         toolbar.addWidget(self.model_combo)
         toolbar.addWidget(self.local_model_btn)
         toolbar.addWidget(QLabel("|"))
         toolbar.addWidget(self.load_btn)
         toolbar.addWidget(self.screens_combo)
-        toolbar.addWidget(QLabel("|"))
-        toolbar.addWidget(self.server_btn)
         toolbar.addStretch()
         
         layout.addLayout(toolbar)
+        
+        # Model-specific hint for the chat tab
+        self.model_hint_label = QLabel("")
+        self.model_hint_label.setObjectName("modelHint")
+        layout.addWidget(self.model_hint_label)
         
         # Local model indicator (hidden by default)
         self.local_model_indicator = QLineEdit()
@@ -409,6 +407,13 @@ class VLMApp(QMainWindow):
         # Create placeholder for results display (used by other methods)
         self.results_display = self.chat_history  # Point to chat history
         
+        # Initialize model-aware UI hints on first load
+        try:
+            self.update_input_placeholder_for_model()
+            self.update_model_hint()
+        except Exception:
+            pass
+        
         return page
 
     def on_model_changed(self):
@@ -417,6 +422,8 @@ class VLMApp(QMainWindow):
         self.update_config_for_model()
         # Update chat input placeholder to match selected model behavior
         self.update_input_placeholder_for_model()
+        # Update model-specific hint on the chat tab
+        self.update_model_hint()
         
         # Clear chat history when model changes
         if hasattr(self, 'conversation_history'):
@@ -492,6 +499,52 @@ class VLMApp(QMainWindow):
 
         if hasattr(self, 'prompt_input'):
             self.prompt_input.setPlaceholderText(placeholder)
+
+    def update_model_hint(self):
+        """Update a short usage hint on the chat tab based on the selected model."""
+        if not hasattr(self, 'model_hint_label'):
+            return
+        try:
+            model_id = self.local_model_path or self.model_combo.currentData()
+        except Exception:
+            model_id = None
+        task = self.task_combo.currentText() if hasattr(self, 'task_combo') else "VQA"
+        if not model_id:
+            self.model_hint_label.setText("")
+            return
+        name = str(model_id).lower()
+
+        # Base hint
+        lines = []
+        lines.append(f"Model: {model_id}")
+        lines.append(f"Task: {task}")
+
+        if ("llava" in name) or ("onevision" in name):
+            if task == "VQA":
+                lines.append("Hint: Ask a direct question about the image. Example: 'What attack is being used?'")
+            else:
+                lines.append("Hint: Describe the image concisely. Example: 'Generate a short caption.'")
+        elif ("blip" in name) or ("vit-gpt2" in name) or ("git" in name):
+            if task == "VQA":
+                lines.append("Hint: Ask a specific visual question. Some BLIP variants support VQA.")
+            else:
+                lines.append("Hint: Provide a caption-style prompt or leave it empty for general description.")
+        elif ("vilt" in name):
+            lines.append("Hint: VQA-focused. Ask a question about the image.")
+        elif ("donut" in name) or ("pix2struct" in name):
+            lines.append("Hint: Document understanding. Ask for text/summary from the image.")
+        else:
+            if task == "VQA":
+                lines.append("Hint: Ask a concise question about the image.")
+            else:
+                lines.append("Hint: Describe the image or ask for a short caption.")
+
+        if hasattr(self, 'screens_combo') and self.screens_combo.currentText() in ("Two Screens", "Two"):
+            lines.append("Note: Two Screens mode is active. Load both images for best results.")
+
+        hint_text = " \u2022 ".join(lines)
+        # Render as a readable single-line hint prefixed by a bullet for each item
+        self.model_hint_label.setText(" • " + hint_text)
 
     def create_models_page(self):
         """Create the models page."""
@@ -1612,6 +1665,9 @@ class VLMApp(QMainWindow):
             self.second_image_widget.setVisible(text == "Two Screens")
         if hasattr(self, 'load_btn2'):
             self.load_btn2.setEnabled(text == "Two Screens")
+        # Refresh the model hint to reflect screen mode
+        if hasattr(self, 'update_model_hint'):
+            self.update_model_hint()
 
     def build_prompt(self, vision_text: str, memory_text: str, user_question: str) -> str:
         screens_line = (
