@@ -42,7 +42,6 @@ MANIFEST
 
 # Unit test / coverage
 .pytest_cache/
-.coverage
 .coverage.*
 htmlcov/
 *.cover
