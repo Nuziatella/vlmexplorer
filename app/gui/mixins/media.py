@@ -9,6 +9,11 @@ class MediaMixin:
     """Image I/O, drag-and-drop, and responsive preview scaling."""
 
     def load_image(self) -> None:
+        """Open a file chooser and load the selected image into the preview.
+
+        On success, updates `self.current_image_path`, displays the image in
+        `self.image_label`, and enables `self.run_btn` if present.
+        """
         file_dialog = QFileDialog()
         file_path, _ = file_dialog.getOpenFileName(
             self,
@@ -23,6 +28,7 @@ class MediaMixin:
                 self.run_btn.setEnabled(True)
 
     def load_image2(self) -> None:
+        """Pick a second image (for Two Screens mode) and update indicators."""
         path, _ = QFileDialog.getOpenFileName(
             self, "Select second image", "", "Images (*.png *.jpg *.jpeg *.bmp *.gif)"
         )
@@ -34,6 +40,7 @@ class MediaMixin:
                 self.cfg_image2_indicator.setText(path)
 
     def pick_local_model(self) -> None:
+        """Choose a local directory as the model source and reflect it in UI."""
         path = QFileDialog.getExistingDirectory(self, "Select local model directory")
         if path:
             self.local_model_path = path
@@ -41,6 +48,7 @@ class MediaMixin:
                 self.local_model_indicator.setText(path)
 
     def display_image(self, image_path: str) -> None:
+        """Render the image at `image_path` scaled appropriately in the preview."""
         pixmap = QPixmap(image_path)
         if not pixmap.isNull():
             pixmap = pixmap.scaled(
@@ -54,6 +62,7 @@ class MediaMixin:
 
     # Drag-and-drop support
     def dragEnterEvent(self, event):  # type: ignore[override]
+        """Accept drags when at least one URL points to a supported image file."""
         if event.mimeData().hasUrls():
             for url in event.mimeData().urls():
                 if str(url.toLocalFile()).lower().endswith((".png", ".jpg", ".jpeg", ".bmp", ".gif")):
@@ -62,6 +71,7 @@ class MediaMixin:
         event.ignore()
 
     def dropEvent(self, event):  # type: ignore[override]
+        """Load the first dropped image and optionally set a second when present."""
         if event.mimeData().hasUrls():
             local_files = [str(url.toLocalFile()) for url in event.mimeData().urls() if str(url.toLocalFile())]
             imgs = [p for p in local_files if p.lower().endswith((".png", ".jpg", ".jpeg", ".bmp", ".gif"))]
@@ -79,6 +89,7 @@ class MediaMixin:
         event.acceptProposedAction()
 
     def resizeEvent(self, event):  # type: ignore[override]
+        """Keep the preview scaled to the label size on window resize."""
         if getattr(self, "current_image_path", None):
             self.display_image(self.current_image_path)
         super().resizeEvent(event)
