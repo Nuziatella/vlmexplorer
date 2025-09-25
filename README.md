@@ -7,7 +7,7 @@ Modern PySide6 desktop app for interacting with Vision-Language Models (VLMs). L
 - **Chat-style UI**: Conversational layout with message bubbles and timestamps.
 - **Model-aware config**: Settings adapt to the selected model (tasks, quantization hints, device mapping).
 - **Model preloading**: Load/unload models in the background for faster inference.
-- **Two-screen support**: Optionally combine two images vertically for NDS-style inputs.
+- **Two-screen support**: Optionally combine two images vertically for inputs.
 - **Export conversation**: Save chat + metadata as structured JSON.
 - **Built-in FastAPI server**: `/health` and `/infer` endpoints for external integrations.
 - **Modern dark theme**: Styled with a sleek, readable interface.
