@@ -27,7 +27,7 @@ pip install -r requirements.txt
 ## Run
 
 ```bash
-python vlm_gui.py
+python main.py
 ```
 
 ## Using the App
@@ -46,7 +46,7 @@ python vlm_gui.py
 
 ## Available Models
 
-See `vlm_gui.py` for the full `available_models` mapping. You can also load a local directory containing standard HF files (e.g. `config.json`, `model.safetensors`, tokenizer files).
+See `app/vlm_gui.py` for the full `available_models` mapping. You can also load a local directory containing standard HF files (e.g. `config.json`, `model.safetensors`, tokenizer files).
 
 ## FastAPI Server
 

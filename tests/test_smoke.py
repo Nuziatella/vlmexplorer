@@ -16,12 +16,12 @@ PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-import vlm_gui  # noqa: E402
+from app.vlm_gui import VLMApp  # noqa: E402
 
 
 def test_can_instantiate_main_window():
     app = QApplication.instance() or QApplication([])
-    window = vlm_gui.VLMApp()
+    window = VLMApp()
     assert window.windowTitle() == "VLM Explorer"
     # Close immediately
     window.close()

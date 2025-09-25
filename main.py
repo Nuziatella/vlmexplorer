@@ -8,7 +8,7 @@ This launches the enhanced VLM GUI with all features including:
 - Pokémon JSON template prompting
 """
 import sys
-from vlm_gui import VLMApp
+from app.vlm_gui import VLMApp
 from PySide6.QtWidgets import QApplication
 
 def main():
