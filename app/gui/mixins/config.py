@@ -97,6 +97,23 @@ class ConfigPageMixin:
         self.device_map_auto = QCheckBox("Accelerate device_map=auto")
         layout.addWidget(self.device_map_auto)
 
+        # Cache settings
+        cache_group = QLabel("Cache Settings")
+        cache_group.setObjectName("groupHeader")
+        layout.addWidget(cache_group)
+
+        cache_form = QFormLayout()
+        self.cache_btn = QPushButton("Choose Cache Directory")
+        self.cache_btn.clicked.connect(self.pick_cache_dir)
+        cache_form.addRow("Cache:", self.cache_btn)
+
+        self.cache_indicator = QLineEdit()
+        self.cache_indicator.setReadOnly(True)
+        self.cache_indicator.setPlaceholderText("Using default HF cache")
+        cache_form.addRow("", self.cache_indicator)
+
+        layout.addLayout(cache_form)
+
         # Image settings
         img_group = QLabel("Image Settings")
         img_group.setObjectName("groupHeader")
