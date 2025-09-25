@@ -1,0 +1,22 @@
+# Normalize line endings and keep native EOLs in working tree (CRLF on Windows)
+* text=auto
+
+# Treat common binary files as binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.bmp binary
+*.webp binary
+*.ttf binary
+*.otf binary
+*.pdf binary
+
+# Do not attempt to diff large ML weights
+*.safetensors -text -diff
+*.bin -text -diff
+*.onnx -text -diff
+*.pt -text -diff
+*.ckpt -text -diff
+*.h5 -text -diff
