@@ -27,6 +27,17 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def _is_image_text_task(task: Optional[str]) -> bool:
+    """Return True if the pipeline task represents an image-to-text style pipeline.
+
+    This covers variations like "image-to-text", "image_text_to_text", "image-text-to-text".
+    """
+    if not task:
+        return False
+    t = str(task).lower().replace('_', '-')
+    return ("image" in t and "text" in t)
+
+
 def run_vlm_inference(
     *,
     model_name: str,
@@ -48,7 +59,8 @@ def run_vlm_inference(
     if cache_dir:
         os.environ["HF_HOME"] = cache_dir
     model_kwargs = {"cache_dir": cache_dir} if cache_dir else {}
-    tokenizer_kwargs = {"cache_dir": cache_dir} if cache_dir else {}
+    # Prefer fast tokenizers to silence warnings
+    tokenizer_kwargs = {"cache_dir": cache_dir, "use_fast": True} if cache_dir else {"use_fast": True}
 
     dtype = torch.float16 if (device != -1 and preprocess.get("use_fp16", False)) else None
     # Quantization configuration (bitsandbytes)
@@ -91,13 +103,15 @@ def run_vlm_inference(
             "tokenizer_kwargs": tokenizer_kwargs,
             "trust_remote_code": True,
         }
-        
-        # Only add device OR device_map, not both
-        if load_opts.get("device_map_auto"):
+
+        # Only add device OR device_map. If quantized or accelerate-style loading is used,
+        # avoid passing an explicit device index and prefer device_map="auto".
+        use_accelerate = bool(model_kwargs.get("quantization_config")) or bool(load_opts.get("device_map_auto"))
+        if use_accelerate:
             pipeline_kwargs["device_map"] = "auto"
         else:
             pipeline_kwargs["device"] = device
-        
+
         vlm_pipeline = pipeline(**pipeline_kwargs)
         # Get the actual task that was used
         actual_task = vlm_pipeline.task
@@ -130,7 +144,7 @@ def run_vlm_inference(
         with torch.inference_mode(), (
             torch.autocast("cuda") if (device != -1 and preprocess.get("use_fp16", False)) else contextlib.nullcontext()
         ):
-            if pipe_task == "image-to-text":
+            if _is_image_text_task(pipe_task):
                 # For image-to-text models (including LLaVA), format prompt appropriately
                 if task == "VQA" and prompt:
                     # Format as a conversation for VQA-style questions
@@ -147,15 +161,20 @@ def run_vlm_inference(
                     generate_kwargs=gen_kwargs or None,
                 )
             else:
-                # For other auto-detected tasks, try the most generic approach
+                # For other auto-detected tasks, first try with a prompt if provided.
                 logger.info(f"Using generic approach for task: {pipe_task}")
-                result = vlm_pipeline(image, generate_kwargs=gen_kwargs or None)
+                try:
+                    full_prompt = prompt if prompt else ""
+                    result = vlm_pipeline(image, prompt=full_prompt, generate_kwargs=gen_kwargs or None)
+                except TypeError:
+                    # Some pipelines won't accept 'prompt'; fallback to image-only
+                    result = vlm_pipeline(image, generate_kwargs=gen_kwargs or None)
     except TypeError as e:
         logger.warning(f"TypeError during inference, trying without generate_kwargs: {e}")
         with torch.inference_mode(), (
             torch.autocast("cuda") if (device != -1 and preprocess.get("use_fp16", False)) else contextlib.nullcontext()
         ):
-            if pipe_task == "image-to-text":
+            if _is_image_text_task(pipe_task):
                 if task == "VQA" and prompt:
                     full_prompt = f"USER: {prompt}\nASSISTANT:"
                 else:
@@ -164,7 +183,12 @@ def run_vlm_inference(
             elif pipe_task == "visual-question-answering":
                 result = vlm_pipeline(image=image, question=prompt, top_k=answer_top_k)
             else:
-                result = vlm_pipeline(image)
+                # Try with prompt first; fallback to image-only
+                try:
+                    full_prompt = prompt if prompt else ""
+                    result = vlm_pipeline(image, prompt=full_prompt)
+                except TypeError:
+                    result = vlm_pipeline(image)
     except Exception as e:
         logger.error(f"Error during inference: {e}")
         raise
@@ -210,7 +234,9 @@ class ModelLoader(QThread):
                 os.environ["HF_HOME"] = self.cache_dir
             
             model_kwargs = {"cache_dir": self.cache_dir} if self.cache_dir else {}
-            tokenizer_kwargs = {"cache_dir": self.cache_dir} if self.cache_dir else {}
+            # Separate kwargs: processors typically don't need/use 'use_fast'
+            processor_kwargs = {"cache_dir": self.cache_dir} if self.cache_dir else {}
+            tokenizer_kwargs = {"cache_dir": self.cache_dir, "use_fast": True} if self.cache_dir else {"use_fast": True}
             
             # Add quantization if specified
             if device != -1:
@@ -256,7 +282,7 @@ class ModelLoader(QThread):
                     processor = LlavaOnevisionProcessor.from_pretrained(
                         self.model_name,
                         trust_remote_code=True,
-                        **tokenizer_kwargs
+                        **processor_kwargs
                     )
                     
                     # Create a custom pipeline-like object
@@ -331,7 +357,7 @@ class ModelLoader(QThread):
                         processor = AutoProcessor.from_pretrained(
                             self.model_name,
                             trust_remote_code=True,
-                            **tokenizer_kwargs
+                            **processor_kwargs
                         )
                         
                         # Create a generic LLaVA pipeline
@@ -408,8 +434,9 @@ class ModelLoader(QThread):
                             "trust_remote_code": True,
                         }
                         
-                        # Only add device OR device_map, not both
-                        if self.load_opts.get("device_map_auto"):
+                        # Only add device OR device_map. Prefer device_map when accelerate/quantization is used
+                        use_accelerate = bool(model_kwargs.get("quantization_config")) or bool(self.load_opts.get("device_map_auto"))
+                        if use_accelerate:
                             fallback_kwargs["device_map"] = "auto"
                         else:
                             fallback_kwargs["device"] = device
@@ -435,8 +462,9 @@ class ModelLoader(QThread):
                     "trust_remote_code": True,
                 }
                 
-                # Only add device OR device_map, not both
-                if self.load_opts.get("device_map_auto"):
+                # Only add device OR device_map. Prefer device_map when accelerate/quantization is used
+                use_accelerate = bool(model_kwargs.get("quantization_config")) or bool(self.load_opts.get("device_map_auto"))
+                if use_accelerate:
                     pipeline_kwargs["device_map"] = "auto"
                 else:
                     pipeline_kwargs["device"] = device
@@ -549,17 +577,17 @@ class VLMWorker(QThread):
             with torch.inference_mode(), (
                 torch.autocast("cuda") if (device != -1 and self.preprocess.get("use_fp16", False)) else contextlib.nullcontext()
             ):
-                # Check if this is our custom LlavaOnevisionPipeline or GenericLlavaPipeline
-                if hasattr(self.preloaded_pipeline, 'processor') and hasattr(self.preloaded_pipeline, 'model'):
-                    # Custom LLaVA pipeline (OneVision or Generic)
-                    result = self.preloaded_pipeline(image, prompt=self.prompt, generate_kwargs=gen_kwargs)
-                elif pipe_task == "image-to-text":
-                    # For image-to-text models, format prompt appropriately
+                if _is_image_text_task(pipe_task):
+                    # For image-to-text models (including LLaVA), format prompt appropriately
                     if self.task == "VQA" and self.prompt:
                         full_prompt = f"USER: {self.prompt}\nASSISTANT:"
                     else:
                         full_prompt = self.prompt if self.prompt else ""
-                    result = self.preloaded_pipeline(image, prompt=full_prompt, generate_kwargs=gen_kwargs or None)
+                    try:
+                        result = self.preloaded_pipeline(image, prompt=full_prompt, generate_kwargs=gen_kwargs or None)
+                    except (TypeError, ValueError):
+                        # Some pipelines expect 'text' instead of 'prompt'
+                        result = self.preloaded_pipeline(image, text=full_prompt, generate_kwargs=gen_kwargs or None)
                 elif pipe_task == "visual-question-answering":
                     # For dedicated VQA models
                     result = self.preloaded_pipeline(
@@ -569,27 +597,40 @@ class VLMWorker(QThread):
                         generate_kwargs=gen_kwargs or None,
                     )
                 else:
-                    # For other tasks, try generic approach
-                    result = self.preloaded_pipeline(image, generate_kwargs=gen_kwargs or None)
+                    # For other tasks, try with a prompt if accepted; otherwise fallback to image-only
+                    full_prompt = self.prompt if self.prompt else ""
+                    try:
+                        result = self.preloaded_pipeline(image, prompt=full_prompt, generate_kwargs=gen_kwargs or None)
+                    except TypeError:
+                        try:
+                            result = self.preloaded_pipeline(image, text=full_prompt, generate_kwargs=gen_kwargs or None)
+                        except TypeError:
+                            result = self.preloaded_pipeline(image, generate_kwargs=gen_kwargs or None)
         except TypeError as e:
             logger.warning(f"TypeError during preloaded inference, trying without generate_kwargs: {e}")
             with torch.inference_mode(), (
                 torch.autocast("cuda") if (device != -1 and self.preprocess.get("use_fp16", False)) else contextlib.nullcontext()
             ):
-                # Check if this is our custom LlavaOnevisionPipeline or GenericLlavaPipeline
-                if hasattr(self.preloaded_pipeline, 'processor') and hasattr(self.preloaded_pipeline, 'model'):
-                    # Custom LLaVA pipeline (no generate_kwargs)
-                    result = self.preloaded_pipeline(image, prompt=self.prompt)
-                elif pipe_task == "image-to-text":
+                if _is_image_text_task(pipe_task):
                     if self.task == "VQA" and self.prompt:
                         full_prompt = f"USER: {self.prompt}\nASSISTANT:"
                     else:
                         full_prompt = self.prompt if self.prompt else ""
-                    result = self.preloaded_pipeline(image, prompt=full_prompt)
+                    try:
+                        result = self.preloaded_pipeline(image, prompt=full_prompt)
+                    except (TypeError, ValueError):
+                        result = self.preloaded_pipeline(image, text=full_prompt)
                 elif pipe_task == "visual-question-answering":
                     result = self.preloaded_pipeline(image=image, question=self.prompt, top_k=answer_top_k)
                 else:
-                    result = self.preloaded_pipeline(image)
+                    full_prompt = self.prompt if self.prompt else ""
+                    try:
+                        result = self.preloaded_pipeline(image, prompt=full_prompt)
+                    except TypeError:
+                        try:
+                            result = self.preloaded_pipeline(image, text=full_prompt)
+                        except TypeError:
+                            result = self.preloaded_pipeline(image)
         
         elapsed = time.perf_counter() - start
         logger.info(f"Preloaded inference completed in {elapsed:.3f} seconds")
