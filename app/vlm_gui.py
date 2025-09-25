@@ -1302,6 +1302,13 @@ class VLMApp(QMainWindow):
                 selection-background-color: #3b82f6;
             }
             
+            /* Model Hint Label */
+            QLabel#modelHint {
+                color: #94a3b8;
+                font-size: 9pt;
+                padding: 2px 4px;
+            }
+            
             QLineEdit {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
                     stop:0 #1e293b, stop:1 #334155);
