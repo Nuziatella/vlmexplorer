@@ -100,6 +100,12 @@ class VLMApp(
         self.setAcceptDrops(True)
         self.last_answer = None
         self.show_chat_page()
+        # Ensure the window is shown so child widgets propagate visibility in tests
+        try:
+            self.show()
+        except Exception:
+            # In offscreen/headless environments, show() is safe but guard just in case
+            pass
 
     def create_sidebar(self):
         """Create the left sidebar navigation."""

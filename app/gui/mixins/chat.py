@@ -47,7 +47,11 @@ class ChatPageMixin:
 
         self.screens_combo = QComboBox()
         self.screens_combo.addItems(["One Screen", "Two Screens"])
+        # Connect both text and index signals to be robust in tests and runtime
         self.screens_combo.currentTextChanged.connect(self.on_screens_changed)
+        self.screens_combo.currentIndexChanged.connect(
+            lambda _: self.on_screens_changed(self.screens_combo.currentText())
+        )
 
         toolbar.addWidget(model_label)
         toolbar.addWidget(self.model_combo)
@@ -180,6 +184,12 @@ class ChatPageMixin:
         try:
             self.update_input_placeholder_for_model()
             self.update_model_hint()
+        except Exception:
+            pass
+
+        # Ensure second image controls reflect the current selection on load
+        try:
+            self.on_screens_changed(self.screens_combo.currentText())
         except Exception:
             pass
 

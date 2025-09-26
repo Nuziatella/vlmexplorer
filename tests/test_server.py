@@ -6,6 +6,7 @@ import base64
 import requests
 from PIL import Image
 import io
+import pytest
 
 def image_to_base64(image_path: str) -> str:
     """Convert an image file to base64 string."""
@@ -17,32 +18,21 @@ def test_server_health():
     print("🔍 Checking server health...")
     try:
         response = requests.get("http://127.0.0.1:8001/health", timeout=10)
-        if response.status_code == 200:
-            data = response.json()
-            print("✅ Server Health Check:")
-            print(f"   Status: {data['status']}")
-            print(f"   CUDA Available: {data['cuda']}")
-            if data.get('vram') and isinstance(data['vram'], dict):
-                print(f"   VRAM: {data['vram']['free_gb']:.2f} / {data['vram']['total_gb']:.2f} GB")
-            return True
-        else:
-            print(f"❌ Health check failed: {response.status_code}")
-            print(f"   Response: {response.text}")
-            return False
     except requests.exceptions.ConnectionError:
-        print("❌ Connection refused - Server not running.")
-        print("   💡 Make sure to:")
-        print("   1. Run: python main.py")
-        print("   2. Click 'Start Server' button")
-        print("   3. Wait for 'Server Started' confirmation")
-        return False
+        pytest.skip("Server not running; skipping health test.")
     except requests.exceptions.Timeout:
-        print("❌ Connection timeout - Server may be starting up.")
-        print("   💡 Wait a few more seconds and try again.")
-        return False
-    except Exception as e:
-        print(f"❌ Unexpected error: {e}")
-        return False
+        pytest.skip("Server timeout; skipping health test.")
+    
+    assert response.status_code == 200, f"/health returned {response.status_code}"
+    data = response.json()
+    print("✅ Server Health Check:")
+    print(f"   Status: {data.get('status')}")
+    print(f"   CUDA Available: {data.get('cuda')}")
+    if isinstance(data.get('vram'), dict):
+        vram = data['vram']
+        assert 'free_gb' in vram and 'total_gb' in vram
+    assert 'status' in data
+    assert 'cuda' in data
 
 def test_inference_example():
     """Test the /infer endpoint with a sample request."""
@@ -91,47 +81,36 @@ User Question: What should I do next?""",
         "image_b64_bottom": None
     }
     
+    print("\n🔄 Testing inference...")
     try:
-        print("\n🔄 Testing inference...")
         response = requests.post(
             "http://127.0.0.1:8001/infer",
             json=request_data,
-            timeout=60
+            timeout=60,
         )
-        
-        if response.status_code == 200:
-            result = response.json()
-            print("✅ Inference successful:")
-            print(f"   Answer: {result['answer']}")
-            print(f"   Time: {result['elapsed_seconds']:.3f} seconds")
-            return True
-        else:
-            print(f"❌ Inference failed: {response.status_code}")
-            print(f"   Error: {response.text}")
-            return False
+    except requests.exceptions.ConnectionError:
+        pytest.skip("Server not running; skipping inference test.")
     except requests.exceptions.Timeout:
-        print("❌ Request timed out (model loading can take time)")
-        return False
-    except Exception as e:
-        print(f"❌ Request failed: {e}")
-        return False
+        pytest.skip("Inference request timed out; skipping.")
+
+    assert response.status_code == 200, f"/infer returned {response.status_code}: {response.text}"
+    result = response.json()
+    assert 'answer' in result
+    assert 'elapsed_seconds' in result
 
 def test_server_metrics():
     """Test the /metrics endpoint to verify counters and latency keys exist."""
     try:
         r = requests.get("http://127.0.0.1:8001/metrics", timeout=5)
-        assert r.status_code == 200, f"/metrics returned {r.status_code}"
-        m = r.json()
-        # Basic keys
-        for k in ["incoming", "succeeded", "failed", "avg_latency_ms", "last_latency_ms", "uptime_seconds"]:
-            assert k in m, f"Missing key in /metrics: {k}"
-        print("✅ /metrics keys present:")
-        print(f"   incoming={m['incoming']} succeeded={m['succeeded']} failed={m['failed']}")
-        print(f"   avg_latency_ms={m['avg_latency_ms']} last_latency_ms={m['last_latency_ms']} uptime={m['uptime_seconds']}")
-        return True
-    except Exception as e:
-        print(f"❌ /metrics test failed: {e}")
-        return False
+    except requests.exceptions.ConnectionError:
+        pytest.skip("Server not running; skipping metrics test.")
+    except requests.exceptions.Timeout:
+        pytest.skip("/metrics timed out; skipping.")
+
+    assert r.status_code == 200, f"/metrics returned {r.status_code}"
+    m = r.json()
+    for k in ["incoming", "succeeded", "failed", "avg_latency_ms", "last_latency_ms", "uptime_seconds"]:
+        assert k in m, f"Missing key in /metrics: {k}"
 
 def main():
     """Run server tests."""

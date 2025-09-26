@@ -237,7 +237,16 @@ class ConfigPageMixin:
         two_mode = text in ("Two", "Two Screens")
         # Toggle chat page second-image UI if present
         if hasattr(self, "second_image_widget"):
-            self.second_image_widget.setVisible(two_mode)
+            if two_mode:
+                self.second_image_widget.show()
+            else:
+                self.second_image_widget.hide()
+            try:
+                # Ensure layout recalculates and state propagates
+                self.second_image_widget.update()
+                self.second_image_widget.repaint()
+            except Exception:
+                pass
         if hasattr(self, "load_btn2"):
             self.load_btn2.setEnabled(two_mode)
         # Toggle config page second-image loader if present
