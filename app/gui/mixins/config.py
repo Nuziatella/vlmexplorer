@@ -103,8 +103,9 @@ class ConfigPageMixin:
         layout.addWidget(cache_group)
 
         cache_form = QFormLayout()
-        self.cache_btn = QPushButton("Choose Cache Directory")
+        self.cache_btn = QPushButton("SELECT CACHE")
         self.cache_btn.clicked.connect(self.pick_cache_dir)
+        self.cache_btn.setObjectName("actionButton")
         cache_form.addRow("Cache:", self.cache_btn)
 
         self.cache_indicator = QLineEdit()
@@ -131,9 +132,10 @@ class ConfigPageMixin:
         self.cfg_screens_combo.currentTextChanged.connect(self.on_screens_changed)
         img_form.addRow("Screens:", self.cfg_screens_combo)
 
-        self.cfg_load_btn2 = QPushButton("Load Image 2")
+        self.cfg_load_btn2 = QPushButton("LOAD IMAGE 2")
         self.cfg_load_btn2.setEnabled(False)
         self.cfg_load_btn2.clicked.connect(self.load_image2)
+        self.cfg_load_btn2.setObjectName("actionButton")
         img_form.addRow("", self.cfg_load_btn2)
 
         self.cfg_image2_indicator = QLineEdit()

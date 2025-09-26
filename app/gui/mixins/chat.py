@@ -27,20 +27,23 @@ class ChatPageMixin:
         toolbar = QHBoxLayout()
 
         # Model selection
-        model_label = QLabel("Model:")
+        model_label = QLabel("MODEL:")
+        model_label.setObjectName("toolbarLabel")
         self.model_combo = QComboBox()
         self.model_combo.setMinimumWidth(300)
         for model_id, model_name in getattr(self, "available_models", {}).items():
             self.model_combo.addItem(model_name, model_id)
         self.model_combo.currentTextChanged.connect(self.on_model_changed)
 
-        self.local_model_btn = QPushButton("📁 Local")
+        self.local_model_btn = QPushButton("LOCAL")
         self.local_model_btn.setToolTip("Load a model from a local directory")
         self.local_model_btn.clicked.connect(self.pick_local_model)
+        self.local_model_btn.setObjectName("actionButton")
 
         # Image controls
-        self.load_btn = QPushButton("🖼️ Load Image")
+        self.load_btn = QPushButton("LOAD IMAGE")
         self.load_btn.clicked.connect(self.load_image)
+        self.load_btn.setObjectName("actionButton")
 
         self.screens_combo = QComboBox()
         self.screens_combo.addItems(["One Screen", "Two Screens"])
@@ -70,8 +73,9 @@ class ChatPageMixin:
 
         # Second image controls (hidden by default)
         self.second_image_layout = QHBoxLayout()
-        self.load_btn2 = QPushButton("📁 Load Second Image")
+        self.load_btn2 = QPushButton("LOAD SECOND IMAGE")
         self.load_btn2.clicked.connect(self.load_image2)
+        self.load_btn2.setObjectName("actionButton")
         self.image2_indicator = QLineEdit()
         self.image2_indicator.setReadOnly(True)
         self.image2_indicator.setPlaceholderText("No second image selected")
@@ -91,7 +95,7 @@ class ChatPageMixin:
         left_panel = QVBoxLayout()
 
         self.image_label = QLabel(
-            "🖼️ Drop an image here or click Load Image\n\nSupported formats: PNG, JPG, JPEG, BMP, GIF"
+            "Drop an image here or click Load Image\n\nSupported formats: PNG, JPG, JPEG, BMP, GIF"
         )
         self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.image_label.setObjectName("imageDisplay")
@@ -106,7 +110,7 @@ class ChatPageMixin:
         right_panel.setSpacing(10)
 
         # Chat history area
-        chat_label = QLabel("💬 Conversation")
+        chat_label = QLabel("CONVERSATION LOG")
         chat_label.setObjectName("groupHeader")
         right_panel.addWidget(chat_label)
 
@@ -121,13 +125,14 @@ class ChatPageMixin:
         input_layout = QHBoxLayout()
 
         self.prompt_input = QLineEdit()
-        self.prompt_input.setPlaceholderText("Ask a question about the image...")
+        self.prompt_input.setPlaceholderText("Enter your query about the image...")
         self.prompt_input.returnPressed.connect(self.run_vlm)
 
-        self.run_btn = QPushButton("Send")
+        self.run_btn = QPushButton("ANALYZE")
         self.run_btn.clicked.connect(self.run_vlm)
         self.run_btn.setEnabled(False)
-        self.run_btn.setMinimumWidth(80)
+        self.run_btn.setMinimumWidth(100)
+        self.run_btn.setObjectName("primaryButton")
 
         input_layout.addWidget(self.prompt_input)
         input_layout.addWidget(self.run_btn)
@@ -137,12 +142,15 @@ class ChatPageMixin:
         # Action buttons
         action_layout = QHBoxLayout()
 
-        self.clear_btn = QPushButton("🗑️ Clear Chat")
+        self.clear_btn = QPushButton("CLEAR")
         self.clear_btn.clicked.connect(self.clear_results)
+        self.clear_btn.setToolTip("Clear conversation history")
+        self.clear_btn.setObjectName("secondaryButton")
 
-        self.export_btn = QPushButton("💾 Export")
-        self.export_btn.setToolTip("Export the latest response")
+        self.export_btn = QPushButton("EXPORT")
+        self.export_btn.setToolTip("Export the latest analysis")
         self.export_btn.clicked.connect(self.export_result)
+        self.export_btn.setObjectName("secondaryButton")
 
         action_layout.addWidget(self.clear_btn)
         action_layout.addWidget(self.export_btn)

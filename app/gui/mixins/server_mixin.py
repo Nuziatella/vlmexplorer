@@ -4,7 +4,7 @@ import threading
 import time
 
 import requests
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QMessageBox
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QMessageBox, QFrame
 from PySide6.QtCore import QTimer
 
 
@@ -21,28 +21,51 @@ class ServerPageMixin:
         header.setObjectName("pageHeader")
         layout.addWidget(header)
 
-        self.server_btn = QPushButton("🚀 Start Server")
+        self.server_btn = QPushButton("START SERVER")
         self.server_btn.clicked.connect(self.toggle_server)
+        self.server_btn.setObjectName("primaryButton")
         layout.addWidget(self.server_btn)
 
         # Status and metrics area
+        status_frame = QFrame()
+        status_frame.setObjectName("statusFrame")
+        status_layout = QVBoxLayout(status_frame)
+        
         self.server_label = QLabel("Server: Stopped")
-        layout.addWidget(self.server_label)
+        self.server_label.setObjectName("serverStatus")
+        status_layout.addWidget(self.server_label)
+        layout.addWidget(status_frame)
 
+        # Metrics panel with futuristic styling
+        metrics_frame = QFrame()
+        metrics_frame.setObjectName("metricsFrame")
+        metrics_layout = QVBoxLayout(metrics_frame)
+        
+        # Metrics header
+        metrics_header = QLabel("SYSTEM METRICS")
+        metrics_header.setObjectName("metricsHeader")
+        metrics_layout.addWidget(metrics_header)
+        
         # Metrics rows
         metrics_row1 = QHBoxLayout()
         self.metrics_in_label = QLabel("Incoming: 0")
+        self.metrics_in_label.setObjectName("metricLabel")
         self.metrics_out_label = QLabel("Succeeded: 0 (Failed: 0)")
+        self.metrics_out_label.setObjectName("metricLabel")
         metrics_row1.addWidget(self.metrics_in_label)
         metrics_row1.addWidget(self.metrics_out_label)
-        layout.addLayout(metrics_row1)
+        metrics_layout.addLayout(metrics_row1)
 
         metrics_row2 = QHBoxLayout()
         self.metrics_latency_label = QLabel("Latency (avg/last): - / - ms")
+        self.metrics_latency_label.setObjectName("metricLabel")
         self.metrics_uptime_label = QLabel("Uptime: 0.0 s")
+        self.metrics_uptime_label.setObjectName("metricLabel")
         metrics_row2.addWidget(self.metrics_latency_label)
         metrics_row2.addWidget(self.metrics_uptime_label)
-        layout.addLayout(metrics_row2)
+        metrics_layout.addLayout(metrics_row2)
+        
+        layout.addWidget(metrics_frame)
 
         # Start a timer placeholder (created on server start)
         self.server_metrics_timer = None
@@ -91,12 +114,14 @@ class ServerPageMixin:
                 )
                 if response.status_code == 200:
                     # Update UI - server is confirmed running
-                    self.server_btn.setText("🛑 Stop Server")
+                    self.server_btn.setText("STOP SERVER")
                     self.server_label.setText(
                         f"Server: Running on http://127.0.0.1:{self.server_port}"
                     )
                     # Start polling metrics periodically
                     self.start_metrics_polling()
+                    
+                    # Show success message
                     QMessageBox.information(
                         self,
                         "Server Started",
@@ -142,7 +167,7 @@ class ServerPageMixin:
         self.stop_metrics_polling()
 
         # Update UI
-        self.server_btn.setText("🚀 Start Server")
+        self.server_btn.setText("START SERVER")
         self.server_label.setText("Server: Stopped")
         self.metrics_in_label.setText("Incoming: 0")
         self.metrics_out_label.setText("Succeeded: 0 (Failed: 0)")

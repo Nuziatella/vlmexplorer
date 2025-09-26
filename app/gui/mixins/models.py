@@ -45,8 +45,9 @@ class ModelsPageMixin:
 
         # Local model selection button
         if not hasattr(self, "local_model_btn"):
-            self.local_model_btn = QPushButton("Browse Local Model...")
+            self.local_model_btn = QPushButton("LOCAL MODEL")
             self.local_model_btn.clicked.connect(self.pick_local_model)
+            self.local_model_btn.setObjectName("actionButton")
         form_layout.addRow("Local Model:", self.local_model_btn)
 
         self.local_model_indicator = QLineEdit()
@@ -55,9 +56,10 @@ class ModelsPageMixin:
         form_layout.addRow("", self.local_model_indicator)
 
         # Browse community models from Hugging Face
-        self.browse_models_btn = QPushButton("🔍 Browse HF Models")
+        self.browse_models_btn = QPushButton("BROWSE MODELS")
         self.browse_models_btn.setToolTip("Fetch popular models for the selected task")
         self.browse_models_btn.clicked.connect(self.browse_hf_models)
+        self.browse_models_btn.setObjectName("actionButton")
         form_layout.addRow("", self.browse_models_btn)
 
         # Task selection is configured on the Configuration page to avoid duplicate widgets.
@@ -70,14 +72,16 @@ class ModelsPageMixin:
         layout.addWidget(load_group)
 
         load_layout = QHBoxLayout()
-        self.load_model_btn = QPushButton("🔄 Load Model")
+        self.load_model_btn = QPushButton("LOAD MODEL")
         self.load_model_btn.setToolTip("Pre-load the selected model for faster inference")
         self.load_model_btn.clicked.connect(self.load_model)
+        self.load_model_btn.setObjectName("primaryButton")
 
-        self.unload_model_btn = QPushButton("❌ Unload Model")
+        self.unload_model_btn = QPushButton("UNLOAD MODEL")
         self.unload_model_btn.setToolTip("Unload the current model to free memory")
         self.unload_model_btn.clicked.connect(self.unload_model)
         self.unload_model_btn.setEnabled(False)
+        self.unload_model_btn.setObjectName("secondaryButton")
 
         load_layout.addWidget(self.load_model_btn)
         load_layout.addWidget(self.unload_model_btn)

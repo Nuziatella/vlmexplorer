@@ -157,36 +157,141 @@ class InferenceMixin:
         return datetime.now().strftime("%H:%M")
 
     def update_chat_display(self) -> None:
+        """Update the chat display with a futuristic AI-themed interface."""
         if not hasattr(self, "chat_history"):
             return
-        chat_html = ""
+        
+        # Add CSS styling for the chat interface
+        chat_html = """
+        <style>
+            .chat-container {
+                font-family: 'Segoe UI', 'SF Pro Display', 'Roboto', sans-serif;
+                padding: 5px;
+            }
+            
+            /* User message styling */
+            .user-message-container {
+                margin: 16px 0;
+                text-align: right;
+            }
+            
+            .user-message {
+                background: linear-gradient(135deg, #2b4b8f 0%, #3b6bcf 100%);
+                color: #ffffff;
+                padding: 12px 16px;
+                border-radius: 12px 12px 2px 12px;
+                display: inline-block;
+                max-width: 75%;
+                word-wrap: break-word;
+                text-align: left;
+                box-shadow: 0 2px 10px rgba(59, 107, 207, 0.2);
+                border: 1px solid rgba(70, 113, 213, 0.5);
+            }
+            
+            .user-timestamp {
+                font-size: 10px;
+                color: #8a9cbe;
+                margin-top: 4px;
+                margin-right: 4px;
+            }
+            
+            /* Assistant message styling */
+            .assistant-message-container {
+                margin: 16px 0;
+                text-align: left;
+            }
+            
+            .assistant-message {
+                background: linear-gradient(135deg, #1a1f2e 0%, #1e2940 100%);
+                color: #e0e6ed;
+                padding: 12px 16px;
+                border-radius: 12px 12px 12px 2px;
+                display: inline-block;
+                max-width: 75%;
+                word-wrap: break-word;
+                box-shadow: 0 2px 10px rgba(12, 14, 20, 0.3);
+                border: 1px solid #2a385a;
+                position: relative;
+            }
+            
+            .assistant-message::before {
+                content: '';
+                position: absolute;
+                top: -1px;
+                left: -1px;
+                right: -1px;
+                height: 1px;
+                background: linear-gradient(90deg, transparent, #4671d5, transparent);
+                border-radius: 12px 12px 0 0;
+            }
+            
+            .assistant-timestamp {
+                font-size: 10px;
+                color: #8a9cbe;
+                margin-top: 4px;
+                margin-left: 4px;
+                display: flex;
+                align-items: center;
+            }
+            
+            .assistant-indicator {
+                display: inline-block;
+                width: 8px;
+                height: 8px;
+                border-radius: 50%;
+                background: #4671d5;
+                margin-right: 5px;
+                box-shadow: 0 0 5px #4671d5;
+            }
+            
+            /* Code blocks in messages */
+            pre {
+                background: rgba(12, 14, 20, 0.5);
+                border: 1px solid #2a385a;
+                border-radius: 6px;
+                padding: 8px;
+                overflow-x: auto;
+                margin: 8px 0;
+            }
+            
+            code {
+                font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+                font-size: 0.9em;
+            }
+        </style>
+        <div class="chat-container">
+        """
+        
+        # Generate message HTML
         for msg in self.conversation_history:
             role = msg["role"]
             content = msg["content"]
             timestamp = msg["timestamp"]
+            
+            # Process content to handle code blocks and line breaks
+            content = content.replace("\n", "<br>")
+            
             if role == "user":
                 chat_html += f"""
-                <div style="margin: 10px 0; text-align: right;">
-                    <div style="background: #0084ff; color: white; padding: 8px 12px; border-radius: 18px; display: inline-block; max-width: 70%; word-wrap: break-word;">
-                        {content}
-                    </div>
-                    <div style="font-size: 11px; color: #888; margin-top: 2px;">
-                        You • {timestamp}
-                    </div>
+                <div class="user-message-container">
+                    <div class="user-message">{content}</div>
+                    <div class="user-timestamp">You · {timestamp}</div>
                 </div>
                 """
             else:
                 chat_html += f"""
-                <div style="margin: 10px 0; text-align: left;">
-                    <div style="background: #f1f1f1; color: #333; padding: 8px 12px; border-radius: 18px; display: inline-block; max-width: 70%; word-wrap: break-word;">
-                        {content}
-                    </div>
-                    <div style="font-size: 11px; color: #888; margin-top: 2px;">
-                        Assistant • {timestamp}
+                <div class="assistant-message-container">
+                    <div class="assistant-message">{content}</div>
+                    <div class="assistant-timestamp">
+                        <span class="assistant-indicator"></span>System · {timestamp}
                     </div>
                 </div>
                 """
+        
+        chat_html += "</div>"  # Close chat-container div
         self.chat_history.setHtml(chat_html)
+        
+        # Scroll to bottom
         scrollbar = self.chat_history.verticalScrollBar()
         scrollbar.setValue(scrollbar.maximum())
 
