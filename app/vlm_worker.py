@@ -331,57 +331,61 @@ def run_vlm_inference(
     else:
         answer = str(result)
 
-    # Strip conversation markers if present (case-insensitive) for any result form
-    try:
-        # Prefer trimming everything before the LAST assistant role marker
-        markers = list(re.finditer(r"(?is)\bassistant\b\s*[:：>»\-]*\s*", answer))
-        if markers:
-            answer = answer[markers[-1].end():].lstrip()
-        else:
-            m = re.search(r"(?is)assistant:\s*", answer)
-            if m:
-                answer = answer[m.end():].lstrip()
-    except Exception:
-        pass
-
     # If the answer looks like a serialized conversation, try to parse and extract assistant content
     try:
         s = answer.strip()
-        if (s.startswith("[") or s.startswith("{")) and ("role" in s and "content" in s):
-            parsed = None
-            try:
-                parsed = json.loads(s)
-            except Exception:
+        if ("role" in s and "content" in s):
+            # Find the first plausible JSON/Python-literal block
+            start_idx = None
+            for ch in ("[", "{"):
+                idx = s.find(ch)
+                if idx != -1:
+                    start_idx = idx if start_idx is None else min(start_idx, idx)
+            if start_idx is not None:
+                s_block = s[start_idx:]
+                parsed = None
                 try:
-                    parsed = ast.literal_eval(s)
+                    parsed = json.loads(s_block)
                 except Exception:
-                    parsed = None
-            if isinstance(parsed, list):
-                for item in reversed(parsed):
-                    if isinstance(item, dict) and str(item.get("role", "")).lower() == "assistant":
-                        content = item.get("content")
-                        if isinstance(content, str):
-                            answer = content
-                            break
-                        if isinstance(content, list):
-                            parts = []
-                            for frag in content:
-                                if isinstance(frag, dict) and frag.get("type") == "text" and isinstance(frag.get("text"), str):
-                                    parts.append(frag.get("text"))
-                            if parts:
-                                answer = "\n".join(parts)
+                    try:
+                        parsed = ast.literal_eval(s_block)
+                    except Exception:
+                        parsed = None
+                if isinstance(parsed, list):
+                    for item in reversed(parsed):
+                        if isinstance(item, dict) and str(item.get("role", "")).lower() == "assistant":
+                            content = item.get("content")
+                            if isinstance(content, str):
+                                answer = content
                                 break
-            elif isinstance(parsed, dict) and str(parsed.get("role", "")).lower() == "assistant":
-                content = parsed.get("content")
-                if isinstance(content, str):
-                    answer = content
-                elif isinstance(content, list):
-                    parts = []
-                    for frag in content:
-                        if isinstance(frag, dict) and frag.get("type") == "text" and isinstance(frag.get("text"), str):
-                            parts.append(frag.get("text"))
-                    if parts:
-                        answer = "\n".join(parts)
+                            if isinstance(content, list):
+                                parts = []
+                                for frag in content:
+                                    if isinstance(frag, dict) and frag.get("type") == "text" and isinstance(frag.get("text"), str):
+                                        parts.append(frag.get("text"))
+                                if parts:
+                                    answer = "\n".join(parts)
+                                    break
+                elif isinstance(parsed, dict) and str(parsed.get("role", "")).lower() == "assistant":
+                    content = parsed.get("content")
+                    if isinstance(content, str):
+                        answer = content
+                    elif isinstance(content, list):
+                        parts = []
+                        for frag in content:
+                            if isinstance(frag, dict) and frag.get("type") == "text" and isinstance(frag.get("text"), str):
+                                parts.append(frag.get("text"))
+                        if parts:
+                            answer = "\n".join(parts)
+    except Exception:
+        pass
+
+    # Finally, strip conversation markers if present (case-insensitive),
+    # but avoid trimming inside quoted JSON/dict content by requiring start-of-line or string boundary.
+    try:
+        markers = list(re.finditer(r"(?im)(?:^|\n)\s*(?:assistant|assistant:)\s*[:：>»\-]*\s*", answer))
+        if markers:
+            answer = answer[markers[-1].end():].lstrip()
     except Exception:
         pass
     logger.debug(f"Normalized answer preview: {answer[:200]!r}")
