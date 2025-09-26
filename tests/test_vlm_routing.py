@@ -40,7 +40,7 @@ def _make_test_image() -> Image.Image:
     return Image.new("RGB", (64, 64), color=(0, 0, 0))
 
 
-def test_chat_like_non_preloaded() -> bool:
+def test_chat_like_non_preloaded():
     """Chat-like models should pass a structured conversation object to text=.
 
     We simulate a local path so run_vlm_inference sets task to image-text-to-text.
@@ -71,12 +71,11 @@ def test_chat_like_non_preloaded() -> bool:
         assert isinstance(text_val, list) and text_val and isinstance(text_val[0], dict), (
             "expected structured conversation object for text="
         )
-        return True
     finally:
         vlm_worker.pipeline = saved_pipeline
 
 
-def test_captioning_non_preloaded() -> bool:
+def test_captioning_non_preloaded():
     """Captioning models should not receive text=; image only."""
     saved_pipeline = vlm_worker.pipeline
     try:
@@ -103,7 +102,6 @@ def test_captioning_non_preloaded() -> bool:
         assert inst.calls, "pipeline was never called"
         call = inst.calls[-1]["kwargs"]
         assert "text" not in call, "captioning should not pass text parameter"
-        return True
     finally:
         vlm_worker.pipeline = saved_pipeline
 

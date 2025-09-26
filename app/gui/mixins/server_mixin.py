@@ -2,6 +2,7 @@ import sys
 import subprocess
 import threading
 import time
+import os
 
 import requests
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QMessageBox, QFrame
@@ -85,6 +86,15 @@ class ServerPageMixin:
         try:
             # Start uvicorn server in a separate thread
             def run_server():
+                # Ensure 'app.server:app' can be imported by setting CWD to project root
+                # server_mixin.py is at app/gui/mixins/, so go up 4 levels
+                project_root = os.path.dirname(
+                    os.path.dirname(
+                        os.path.dirname(
+                            os.path.dirname(os.path.abspath(__file__))
+                        )
+                    )
+                )
                 self.server_process = subprocess.Popen(
                     [
                         sys.executable,
@@ -98,6 +108,7 @@ class ServerPageMixin:
                     ],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
+                    cwd=project_root,
                 )
                 self.server_process.wait()
 
