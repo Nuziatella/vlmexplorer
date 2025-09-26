@@ -229,44 +229,76 @@ class InferenceMixin:
             if self.screens_combo.currentText() in ("Two Screens", "Two")
             else "[Input: One gameplay screenshot]"
         )
-        return (
-            f"{screens_line}\n\n"
-            "Task: Analyze this Pokémon screenshot and respond ONLY with a single JSON object, no extra text. "
-            "Player buttons: A, B, Up, Down, Left, Right, Start, Select, L, R.\n\n"
-            "UI Modes:\n"
-            "- BATTLE: HP bars, Pokémon sprites, battle interface\n"
-            "- DIALOG: Text boxes\n"
-            "- MENU: Menu lists, Pokémon stats/items\n"
-            "- OVERWORLD: Player on map, no overlays\n\n"
-            "Steps:\n"
-            "1) Detect visible UI elements (HP bars, text boxes, menus, map)\n"
-            "2) Pick the dominant screen mode\n"
-            "3) If multiple modes present, pick the one requiring immediate player action\n\n"
-            "JSON Schema:\n"
-            "{\n"
-            " \"ui_mode\": \"OVERWORLD|DIALOG|MENU|BATTLE\",\n"
-            " \"visible_text\": \"concise text\",\n"
-            " \"hp_estimates\": {\"player_hp_pct\":0..100,\"opponent_hp_pct\":0..100},\n"
-            " \"menu_options\": [\"list of strings\"],\n"
-            " \"suggested_action\": \"A|B|UP|DOWN|LEFT|RIGHT|START|SELECT|L|R\",\n"
-            " \"reason\": \"brief, <10 words\",\n"
-            " \"confidence\": 0.0..1.0\n"
-            "}\n\n"
-            "Rules:\n"
-            "- Non-BATTLE → hp_estimates = {\"player_hp_pct\":0,\"opponent_hp_pct\":0}\n"
-            "- Focus on player’s next required action\n"
-            "- Default ui_mode=OVERWORLD if unsure\n"
-            "- Default suggested_action=\"A\" with confidence=0.0 if unsure\n\n"
-            f"Context:\nVISION_PROMPT: {vision_text}\nMEMORY: {memory_text}\n\n"
-            "Return completed JSON object:\n"
-            "{\n"
-            " \"visible_text\": \"\",\n"
-            " \"hp_estimates\": {\"player_hp_pct\":0,\"opponent_hp_pct\":0},\n"
-            " \"menu_options\": [],\n"
-            " \"suggested_action\": \"\",\n"
-            " \"reason\": \"\",\n"
-            " \"ui_mode\": \"\",\n"
-            " \"confidence\": 0.0\n"
-            "}\n\n"
-            f"User Question: {user_question}\n"
+
+        # Decide whether the user explicitly requested JSON output
+        text_bundle = " ".join([
+            str(vision_text or ""),
+            str(memory_text or ""),
+            str(user_question or ""),
+        ]).lower()
+        wants_json = any(
+            key in text_bundle
+            for key in ["json", "schema", "return a json", "output json", "as json", "in json"]
         )
+
+        if wants_json:
+            # Structured JSON output when explicitly requested
+            return (
+                f"{screens_line}\n\n"
+                "Task: Analyze this Pokémon screenshot and respond ONLY with a single JSON object, no extra text. "
+                "Player buttons: A, B, Up, Down, Left, Right, Start, Select, L, R.\n\n"
+                "UI Modes:\n"
+                "- BATTLE: HP bars, Pokémon sprites, battle interface\n"
+                "- DIALOG: Text boxes\n"
+                "- MENU: Menu lists, Pokémon stats/items\n"
+                "- OVERWORLD: Player on map, no overlays\n\n"
+                "Steps:\n"
+                "1) Detect visible UI elements (HP bars, text boxes, menus, map)\n"
+                "2) Pick the dominant screen mode\n"
+                "3) If multiple modes present, pick the one requiring immediate player action\n\n"
+                "JSON Schema:\n"
+                "{\n"
+                " \"ui_mode\": \"OVERWORLD|DIALOG|MENU|BATTLE\",\n"
+                " \"visible_text\": \"concise text\",\n"
+                " \"hp_estimates\": {\"player_hp_pct\":0..100,\"opponent_hp_pct\":0..100},\n"
+                " \"menu_options\": [\"list of strings\"],\n"
+                " \"suggested_action\": \"A|B|UP|DOWN|LEFT|RIGHT|START|SELECT|L|R\",\n"
+                " \"reason\": \"brief, <10 words\",\n"
+                " \"confidence\": 0.0..1.0\n"
+                "}\n\n"
+                "Rules:\n"
+                "- Non-BATTLE → hp_estimates = {\"player_hp_pct\":0,\"opponent_hp_pct\":0}\n"
+                "- Focus on player’s next required action\n"
+                "- Default ui_mode=OVERWORLD if unsure\n"
+                "- Default suggested_action=\"A\" with confidence=0.0 if unsure\n\n"
+                f"Context:\nVISION_PROMPT: {vision_text}\nMEMORY: {memory_text}\n\n"
+                "Return completed JSON object:\n"
+                "{\n"
+                " \"visible_text\": \"\",\n"
+                " \"hp_estimates\": {\"player_hp_pct\":0,\"opponent_hp_pct\":0},\n"
+                " \"menu_options\": [],\n"
+                " \"suggested_action\": \"\",\n"
+                " \"reason\": \"\",\n"
+                " \"ui_mode\": \"\",\n"
+                " \"confidence\": 0.0\n"
+                "}\n\n"
+                f"User Question: {user_question}\n"
+            )
+        else:
+            # Natural conversational output by default
+            return (
+                f"{screens_line}\n\n"
+                "Task: Analyze this Pokémon screenshot and answer the user's question clearly and concisely. "
+                "Player buttons: A, B, Up, Down, Left, Right, Start, Select, L, R.\n\n"
+                "UI Modes:\n"
+                "- BATTLE: HP bars, Pokémon sprites, battle interface\n"
+                "- DIALOG: Text boxes\n"
+                "- MENU: Menu lists, Pokémon stats/items\n"
+                "- OVERWORLD: Player on map, no overlays\n\n"
+                "Guidance:\n"
+                "1) Identify visible UI elements (HP bars, text boxes, menus, map)\n"
+                "2) Decide the current screen mode\n"
+                "3) If multiple modes present, prefer the one requiring immediate action\n\n"
+                f"Context:\nVISION_PROMPT: {vision_text}\nMEMORY: {memory_text}\n\n"
+                f"User Question: {user_question}\n"
+            )
