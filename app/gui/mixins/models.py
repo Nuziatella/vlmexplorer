@@ -175,9 +175,30 @@ class ModelsPageMixin:
     def unload_model(self) -> None:
         """Unload the current model to free memory."""
         if getattr(self, "loaded_pipeline", None):
-            # Clear the pipeline and force garbage collection
+            # If inference is running, stop it cleanly first
+            try:
+                if getattr(self, "worker", None) and self.worker.isRunning():
+                    self.worker.stop()
+                    self.worker.wait()
+                # Release reference regardless
+                if getattr(self, "worker", None):
+                    self.worker = None
+            except Exception:
+                pass
+
+            # If a model is currently loading, request cancellation
+            try:
+                if getattr(self, "model_load_worker", None) and self.model_load_worker.isRunning():
+                    self.model_load_worker.stop()
+                    self.model_load_worker.wait()
+                    self.model_load_worker = None
+            except Exception:
+                pass
+
+            # Clear the pipeline and metadata
             self.loaded_pipeline = None
             self.loaded_model_name = None
+            self.loaded_model_config = None
 
             # Force cleanup
             import gc
@@ -189,6 +210,33 @@ class ModelsPageMixin:
             # Update UI
             self.unload_model_btn.setEnabled(False)
             self.model_status_label.setText("No model loaded")
+            if hasattr(self, "load_model_btn"):
+                self.load_model_btn.setEnabled(True)
+            if hasattr(self, "progress_bar"):
+                self.progress_bar.setVisible(False)
+
+            # Reset chat/results tab so the user sees a clean slate
+            try:
+                if hasattr(self, "clear_results"):
+                    self.clear_results()
+            except Exception:
+                pass
+
+            # Refresh placeholders and model-specific hints
+            try:
+                if hasattr(self, "update_input_placeholder_for_model"):
+                    self.update_input_placeholder_for_model()
+                if hasattr(self, "update_model_hint"):
+                    self.update_model_hint()
+            except Exception:
+                pass
+
+            # Re-enable UI elements according to current image availability
+            try:
+                if hasattr(self, "set_ui_enabled"):
+                    self.set_ui_enabled(True)
+            except Exception:
+                pass
 
             QMessageBox.information(self, "Model Unloaded", "Model unloaded and memory freed.")
 
