@@ -48,9 +48,12 @@ class VLMApp(
         self.setMinimumSize(1200, 900)
         
         # Set application icon
-        icon_path = "D:/CascadeProjects/windsurf-project/favicon_io/favicon-32x32.png"
+        import os
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        icon_path = os.path.join(project_root, "favicon_io", "favicon-32x32.png")
         try:
-            self.setWindowIcon(QIcon(icon_path))
+            if os.path.exists(icon_path):
+                self.setWindowIcon(QIcon(icon_path))
         except Exception:
             pass  # Fallback if icon not found
         
@@ -108,7 +111,7 @@ class VLMApp(
         sidebar_layout.setContentsMargins(0, 0, 0, 0)
         
         # Header
-        header = QLabel("VLM Explorer")
+        header = QLabel("VLM EXPLORER")
         header.setObjectName("sidebarHeader")
         header.setAlignment(Qt.AlignmentFlag.AlignCenter)
         sidebar_layout.addWidget(header)
@@ -120,14 +123,14 @@ class VLMApp(
         
         self.nav_buttons = {}
         nav_items = [
-            ("💬", "Chat", self.show_chat_page),
-            ("🤖", "Models", self.show_models_page),
-            ("⚙️", "Configuration", self.show_config_page),
-            ("🚀", "Server", self.show_server_page)
+            ("Chat", self.show_chat_page),
+            ("Models", self.show_models_page),
+            ("Configuration", self.show_config_page),
+            ("Server", self.show_server_page)
         ]
         
-        for icon, name, callback in nav_items:
-            btn = QPushButton(f"{icon}  {name}")
+        for name, callback in nav_items:
+            btn = QPushButton(name)
             btn.setObjectName("navButton")
             btn.clicked.connect(callback)
             btn.setCheckable(True)
