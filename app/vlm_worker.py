@@ -9,6 +9,8 @@ import contextlib
 import time
 import logging
 import re
+import json
+import ast
 from typing import Any, Dict, Optional
 
 import torch
@@ -37,6 +39,20 @@ def _is_image_text_task(task: Optional[str]) -> bool:
         return False
     t = str(task).lower().replace('_', '-')
     return ("image" in t and "text" in t)
+
+def _is_image_text_to_text(task: Optional[str]) -> bool:
+    """True if the task is specifically image-text-to-text."""
+    if not task:
+        return False
+    t = str(task).lower().replace('_', '-')
+    return "image-text-to-text" in t
+
+def _is_image_to_text_task(task: Optional[str]) -> bool:
+    """True if the task is image-to-text (captioning)."""
+    if not task:
+        return False
+    t = str(task).lower().replace('_', '-')
+    return ("image-to-text" in t) and ("image-text-to-text" not in t)
 
 
 def run_vlm_inference(
@@ -77,21 +93,26 @@ def run_vlm_inference(
     # Determine if this is a local model path or HF model ID
     is_local_model = os.path.exists(model_name) or (os.path.sep in model_name or '\\' in model_name)
     
+    name_l = model_name.lower()
+    chat_like = any(s in name_l for s in [
+        "llava", "onevision", "qwen", "qwen2", "qwen2.5", "cogvlm", "internvl", "fuyu", "minigpt", "instructblip"
+    ])
     if is_local_model:
         logger.info(f"Detected local model path: {model_name}")
-        # For local models, we need to specify the task since auto-detection requires HF Hub access
-        # Try to infer from model name or default to image-to-text for most VLMs
-        if "llava" in model_name.lower() or "onevision" in model_name.lower():
-            pipe_task = "image-to-text"
-        elif task == "Image-to-Text":
-            pipe_task = "image-to-text"
+        # For local models, choose text-conditioned pipeline for chat/VQA models
+        if chat_like or task == "VQA":
+            pipe_task = "image-text-to-text"
         else:
-            # Default to image-to-text for local VLMs as it's more versatile
             pipe_task = "image-to-text"
         logger.info(f"Using task '{pipe_task}' for local model")
     else:
-        logger.info("Creating pipeline with automatic task detection for HF model")
-        pipe_task = None  # Let HF auto-detect
+        # For HF models, force image-text-to-text for chat-like or VQA tasks; otherwise allow auto-detect
+        if chat_like or task == "VQA":
+            pipe_task = "image-text-to-text"
+            logger.info("Forcing 'image-text-to-text' for chat-like/VQA model")
+        else:
+            logger.info("Creating pipeline with automatic task detection for HF model")
+            pipe_task = None
     
     try:
         # Create pipeline kwargs
@@ -143,15 +164,7 @@ def run_vlm_inference(
         with torch.inference_mode(), (
             torch.autocast("cuda") if (device != -1 and preprocess.get("use_fp16", False)) else contextlib.nullcontext()
         ):
-            if _is_image_text_task(pipe_task):
-                # For image-to-text models, pass the prompt directly (no chat wrappers)
-                full_prompt = prompt if prompt else ""
-                # Ensure image placeholder for models that require it (e.g., LLaVA variants)
-                try_model_name = str(model_name).lower()
-                if ("llava" in try_model_name or "onevision" in try_model_name) and ("<image" not in full_prompt):
-                    full_prompt = "<image>\n" + full_prompt
-                result = vlm_pipeline(image, prompt=full_prompt, generate_kwargs=gen_kwargs or None)
-            elif pipe_task == "visual-question-answering":
+            if pipe_task == "visual-question-answering":
                 # For dedicated VQA models
                 result = vlm_pipeline(
                     image=image,
@@ -159,12 +172,34 @@ def run_vlm_inference(
                     top_k=answer_top_k,
                     generate_kwargs=gen_kwargs or None,
                 )
+            elif _is_image_text_to_text(pipe_task):
+                # Text-conditioned VLMs: prefer structured chat conversation for chat-like models
+                if chat_like:
+                    conversation = [
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "image"},
+                                {"type": "text", "text": prompt or ""},
+                            ],
+                        }
+                    ]
+                    result = vlm_pipeline(image, text=conversation, generate_kwargs=gen_kwargs or None)
+                else:
+                    # Fallback to plain text
+                    plain = (prompt or "")
+                    if chat_like and "<image" not in plain:
+                        plain = "<image>\n" + plain
+                    result = vlm_pipeline(image, text=plain, generate_kwargs=gen_kwargs or None)
+            elif _is_image_to_text_task(pipe_task):
+                # Pure captioning: no text/prompt supported
+                result = vlm_pipeline(image, generate_kwargs=gen_kwargs or None)
             else:
                 # For other auto-detected tasks, first try with a prompt if provided.
                 logger.info(f"Using generic approach for task: {pipe_task}")
                 try:
                     full_prompt = prompt if prompt else ""
-                    result = vlm_pipeline(image, prompt=full_prompt, generate_kwargs=gen_kwargs or None)
+                    result = vlm_pipeline(image, text=full_prompt, generate_kwargs=gen_kwargs or None)
                 except TypeError:
                     # Some pipelines won't accept 'prompt'; fallback to image-only
                     result = vlm_pipeline(image, generate_kwargs=gen_kwargs or None)
@@ -173,22 +208,35 @@ def run_vlm_inference(
         with torch.inference_mode(), (
             torch.autocast("cuda") if (device != -1 and preprocess.get("use_fp16", False)) else contextlib.nullcontext()
         ):
-            if _is_image_text_task(pipe_task):
-                full_prompt = prompt if prompt else ""
-                try_model_name = str(model_name).lower()
-                if ("llava" in try_model_name or "onevision" in try_model_name) and ("<image" not in full_prompt):
-                    full_prompt = "<image>\n" + full_prompt
-                result = vlm_pipeline(image, prompt=full_prompt)
-            elif pipe_task == "visual-question-answering":
+            if pipe_task == "visual-question-answering":
                 result = vlm_pipeline(image=image, question=prompt, top_k=answer_top_k)
+            elif _is_image_text_to_text(pipe_task):
+                if chat_like and (
+                    (hasattr(vlm_pipeline, "processor") and hasattr(vlm_pipeline.processor, "apply_chat_template")) or
+                    (hasattr(vlm_pipeline, "tokenizer") and hasattr(vlm_pipeline.tokenizer, "apply_chat_template"))
+                ):
+                    conversation = [
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "image"},
+                                {"type": "text", "text": prompt or ""},
+                            ],
+                        }
+                    ]
+                    result = vlm_pipeline(image, text=conversation)
+                else:
+                    plain = (prompt or "")
+                    if chat_like and "<image" not in plain:
+                        plain = "<image>\n" + plain
+                    result = vlm_pipeline(image, text=plain)
+            elif _is_image_to_text_task(pipe_task):
+                result = vlm_pipeline(image)
             else:
                 # Try with prompt first; fallback to image-only
                 try:
                     full_prompt = prompt if prompt else ""
-                    try_model_name = str(model_name).lower()
-                    if ("llava" in try_model_name or "onevision" in try_model_name) and ("<image" not in full_prompt):
-                        full_prompt = "<image>\n" + full_prompt
-                    result = vlm_pipeline(image, prompt=full_prompt)
+                    result = vlm_pipeline(image, text=full_prompt)
                 except TypeError:
                     result = vlm_pipeline(image)
     except Exception as e:
@@ -198,14 +246,32 @@ def run_vlm_inference(
             with torch.inference_mode(), (
                 torch.autocast("cuda") if (device != -1 and preprocess.get("use_fp16", False)) else contextlib.nullcontext()
             ):
-                if _is_image_text_task(pipe_task):
-                    full_prompt = (prompt or "")
-                    if "<image" not in full_prompt:
-                        full_prompt = "<image>\n" + full_prompt
-                    try:
-                        result = vlm_pipeline(image, prompt=full_prompt, generate_kwargs=gen_kwargs or None)
-                    except Exception:
-                        result = vlm_pipeline(image, text=full_prompt, generate_kwargs=gen_kwargs or None)
+                if _is_image_text_to_text(pipe_task):
+                    if chat_like and (
+                        (hasattr(vlm_pipeline, "processor") and hasattr(vlm_pipeline.processor, "apply_chat_template")) or
+                        (hasattr(vlm_pipeline, "tokenizer") and hasattr(vlm_pipeline.tokenizer, "apply_chat_template"))
+                    ):
+                        conversation = [
+                            {
+                                "role": "user",
+                                "content": [
+                                    {"type": "image"},
+                                    {"type": "text", "text": prompt or ""},
+                                ],
+                            }
+                        ]
+                        try:
+                            result = vlm_pipeline(image, text=conversation, generate_kwargs=gen_kwargs or None)
+                        except Exception:
+                            result = vlm_pipeline(image, generate_kwargs=gen_kwargs or None)
+                    else:
+                        try:
+                            plain = (prompt or "")
+                            if chat_like and "<image" not in plain:
+                                plain = "<image>\n" + plain
+                            result = vlm_pipeline(image, text=plain, generate_kwargs=gen_kwargs or None)
+                        except Exception:
+                            result = vlm_pipeline(image, generate_kwargs=gen_kwargs or None)
                 else:
                     raise
         else:
@@ -216,21 +282,109 @@ def run_vlm_inference(
 
     # Normalize result to answer string
     if isinstance(result, list) and result and isinstance(result[0], dict):
+        # Prefer explicit generated text
         if "generated_text" in result[0]:
             answer = str(result[0]["generated_text"])
         elif "answer" in result[0]:
             answer = str(result[0]["answer"])
         else:
-            answer = str(result[0])
+            # Try to extract assistant content from a chat-style structure
+            assistant_text = None
+            try:
+                for item in reversed(result):
+                    if isinstance(item, dict) and str(item.get("role", "")).lower() == "assistant":
+                        content = item.get("content")
+                        if isinstance(content, str):
+                            assistant_text = content
+                            break
+                        if isinstance(content, list):
+                            # Collect any text fragments
+                            parts = []
+                            for frag in content:
+                                if isinstance(frag, dict) and frag.get("type") == "text" and isinstance(frag.get("text"), str):
+                                    parts.append(frag.get("text"))
+                            if parts:
+                                assistant_text = "\n".join(parts)
+                                break
+            except Exception:
+                assistant_text = None
+                try:
+                    # Try to extract assistant content from a chat-style structure
+                    for item in reversed(result):
+                        if isinstance(item, dict) and str(item.get("role", "")).lower() == "assistant":
+                            content = item.get("content")
+                            if isinstance(content, str):
+                                assistant_text = content
+                                break
+                            if isinstance(content, list):
+                                # Collect any text fragments
+                                parts = []
+                                for frag in content:
+                                    if isinstance(frag, dict) and frag.get("type") == "text" and isinstance(frag.get("text"), str):
+                                        parts.append(frag.get("text"))
+                                if parts:
+                                    assistant_text = "\n".join(parts)
+                                    break
+                except Exception:
+                    pass
+            answer = assistant_text if assistant_text is not None else str(result[0])
     else:
         answer = str(result)
-    # Strip conversation markers if present (case-insensitive)
+
+    # Strip conversation markers if present (case-insensitive) for any result form
     try:
-        m = re.search(r"(?is)assistant:\s*", answer)
-        if m:
-            answer = answer[m.end():].lstrip()
+        # Prefer trimming everything before the LAST assistant role marker
+        markers = list(re.finditer(r"(?is)\bassistant\b\s*[:：>»\-]*\s*", answer))
+        if markers:
+            answer = answer[markers[-1].end():].lstrip()
+        else:
+            m = re.search(r"(?is)assistant:\s*", answer)
+            if m:
+                answer = answer[m.end():].lstrip()
     except Exception:
         pass
+
+    # If the answer looks like a serialized conversation, try to parse and extract assistant content
+    try:
+        s = answer.strip()
+        if (s.startswith("[") or s.startswith("{")) and ("role" in s and "content" in s):
+            parsed = None
+            try:
+                parsed = json.loads(s)
+            except Exception:
+                try:
+                    parsed = ast.literal_eval(s)
+                except Exception:
+                    parsed = None
+            if isinstance(parsed, list):
+                for item in reversed(parsed):
+                    if isinstance(item, dict) and str(item.get("role", "")).lower() == "assistant":
+                        content = item.get("content")
+                        if isinstance(content, str):
+                            answer = content
+                            break
+                        if isinstance(content, list):
+                            parts = []
+                            for frag in content:
+                                if isinstance(frag, dict) and frag.get("type") == "text" and isinstance(frag.get("text"), str):
+                                    parts.append(frag.get("text"))
+                            if parts:
+                                answer = "\n".join(parts)
+                                break
+            elif isinstance(parsed, dict) and str(parsed.get("role", "")).lower() == "assistant":
+                content = parsed.get("content")
+                if isinstance(content, str):
+                    answer = content
+                elif isinstance(content, list):
+                    parts = []
+                    for frag in content:
+                        if isinstance(frag, dict) and frag.get("type") == "text" and isinstance(frag.get("text"), str):
+                            parts.append(frag.get("text"))
+                    if parts:
+                        answer = "\n".join(parts)
+    except Exception:
+        pass
+    logger.debug(f"Normalized answer preview: {answer[:200]!r}")
     return answer, elapsed
 
 
@@ -240,7 +394,6 @@ class ModelLoader(QThread):
     finished = Signal(object)  # Emits the loaded pipeline
     error = Signal(str)
     progress = Signal(int)
-    
     def __init__(self, model_name: str, cache_dir: Optional[str] = None, 
                  load_opts: Optional[Dict[str, Any]] = None):
         super().__init__()
@@ -318,9 +471,10 @@ class ModelLoader(QThread):
                         def __init__(self, model, processor):
                             self.model = model
                             self.processor = processor
-                            self.task = "image-to-text"
+                            self.task = "image-text-to-text"
                         
-                        def __call__(self, image, prompt="", **kwargs):
+                        def __call__(self, image, text="", **kwargs):
+                            prompt = text or ""
                             # Format the conversation
                             conversation = [
                                 {
@@ -393,9 +547,10 @@ class ModelLoader(QThread):
                             def __init__(self, model, processor):
                                 self.model = model
                                 self.processor = processor
-                                self.task = "image-to-text"
+                                self.task = "image-text-to-text"
                             
-                            def __call__(self, image, prompt="", **kwargs):
+                            def __call__(self, image, text="", **kwargs):
+                                prompt = text or ""
                                 try:
                                     # Try the conversation format first
                                     if hasattr(self.processor, 'apply_chat_template'):
@@ -454,7 +609,7 @@ class ModelLoader(QThread):
                         logger.warning(f"AutoModel approach also failed ({auto_error}), falling back to standard pipeline")
                         # Final fallback to standard pipeline
                         fallback_kwargs = {
-                            "task": "image-to-text",
+                            "task": "image-text-to-text",
                             "model": self.model_name,
                             "dtype": torch.float16 if (device != -1) else None,
                             "model_kwargs": model_kwargs,
@@ -471,13 +626,14 @@ class ModelLoader(QThread):
                         pipeline_obj = pipeline(**fallback_kwargs)
             else:
                 # Standard pipeline loading for other models
+                name_l = self.model_name.lower()
+                chat_like = any(s in name_l for s in [
+                    "llava", "onevision", "qwen", "qwen2", "qwen2.5", "cogvlm", "internvl", "fuyu", "minigpt", "instructblip"
+                ])
                 if is_local_model:
-                    if "llava" in self.model_name.lower():
-                        pipe_task = "image-to-text"
-                    else:
-                        pipe_task = "image-to-text"  # Default for local VLMs
+                    pipe_task = "image-text-to-text" if chat_like else "image-to-text"
                 else:
-                    pipe_task = None  # Auto-detect for HF models
+                    pipe_task = "image-text-to-text" if chat_like else None  # Auto-detect for HF models
                 
                 # Create the pipeline
                 pipeline_kwargs = {
@@ -603,21 +759,11 @@ class VLMWorker(QThread):
             with torch.inference_mode(), (
                 torch.autocast("cuda") if (device != -1 and self.preprocess.get("use_fp16", False)) else contextlib.nullcontext()
             ):
-                if _is_image_text_task(pipe_task):
-                    # For image-to-text models (including LLaVA), format prompt appropriately
-                    if self.task == "VQA" and self.prompt:
-                        full_prompt = f"USER: {self.prompt}\nASSISTANT:"
-                    else:
-                        full_prompt = self.prompt if self.prompt else ""
-                    # Ensure image placeholder for models that require it (e.g., LLaVA variants)
-                    if ("llava" in str(self.model_name).lower() or "onevision" in str(self.model_name).lower()) and ("<image" not in full_prompt):
-                        full_prompt = "<image>\n" + full_prompt
-                    try:
-                        result = self.preloaded_pipeline(image, prompt=full_prompt, generate_kwargs=gen_kwargs or None)
-                    except (TypeError, ValueError):
-                        # Some pipelines expect 'text' instead of 'prompt'
-                        result = self.preloaded_pipeline(image, text=full_prompt, generate_kwargs=gen_kwargs or None)
-                elif pipe_task == "visual-question-answering":
+                name_l = str(self.model_name).lower()
+                chat_like = any(s in name_l for s in [
+                    "llava", "onevision", "qwen", "qwen2", "qwen2.5", "cogvlm", "internvl", "fuyu", "minigpt", "instructblip"
+                ])
+                if pipe_task == "visual-question-answering":
                     # For dedicated VQA models
                     result = self.preloaded_pipeline(
                         image=image,
@@ -625,43 +771,66 @@ class VLMWorker(QThread):
                         top_k=answer_top_k,
                         generate_kwargs=gen_kwargs or None,
                     )
+                elif _is_image_text_to_text(pipe_task):
+                    # Text-conditioned VLMs: prefer structured chat conversation
+                    if chat_like:
+                        conversation = [
+                            {
+                                "role": "user",
+                                "content": [
+                                    {"type": "image"},
+                                    {"type": "text", "text": self.prompt or ""},
+                                ],
+                            }
+                        ]
+                        result = self.preloaded_pipeline(image, text=conversation, generate_kwargs=gen_kwargs or None)
+                    else:
+                        plain = (self.prompt or "")
+                        result = self.preloaded_pipeline(image, text=plain, generate_kwargs=gen_kwargs or None)
+                elif _is_image_to_text_task(pipe_task):
+                    # Pure captioning: no text/prompt supported
+                    result = self.preloaded_pipeline(image, generate_kwargs=gen_kwargs or None)
                 else:
-                    # For other tasks, try with a prompt if accepted; otherwise fallback to image-only
+                    # Unknown/auto-detected: try text=; if unsupported, fallback to image-only
                     full_prompt = self.prompt if self.prompt else ""
                     try:
-                        result = self.preloaded_pipeline(image, prompt=full_prompt, generate_kwargs=gen_kwargs or None)
+                        result = self.preloaded_pipeline(image, text=full_prompt, generate_kwargs=gen_kwargs or None)
                     except TypeError:
-                        try:
-                            result = self.preloaded_pipeline(image, text=full_prompt, generate_kwargs=gen_kwargs or None)
-                        except TypeError:
-                            result = self.preloaded_pipeline(image, generate_kwargs=gen_kwargs or None)
+                        result = self.preloaded_pipeline(image, generate_kwargs=gen_kwargs or None)
         except TypeError as e:
             logger.warning(f"TypeError during preloaded inference, trying without generate_kwargs: {e}")
             with torch.inference_mode(), (
                 torch.autocast("cuda") if (device != -1 and self.preprocess.get("use_fp16", False)) else contextlib.nullcontext()
             ):
-                if _is_image_text_task(pipe_task):
-                    if self.task == "VQA" and self.prompt:
-                        full_prompt = f"USER: {self.prompt}\nASSISTANT:"
-                    else:
-                        full_prompt = self.prompt if self.prompt else ""
-                    if ("llava" in str(self.model_name).lower() or "onevision" in str(self.model_name).lower()) and ("<image" not in full_prompt):
-                        full_prompt = "<image>\n" + full_prompt
-                    try:
-                        result = self.preloaded_pipeline(image, prompt=full_prompt)
-                    except (TypeError, ValueError):
-                        result = self.preloaded_pipeline(image, text=full_prompt)
-                elif pipe_task == "visual-question-answering":
+                name_l = str(self.model_name).lower()
+                chat_like = any(s in name_l for s in [
+                    "llava", "onevision", "qwen", "qwen2", "qwen2.5", "cogvlm", "internvl", "fuyu", "minigpt", "instructblip"
+                ])
+                if pipe_task == "visual-question-answering":
                     result = self.preloaded_pipeline(image=image, question=self.prompt, top_k=answer_top_k)
+                elif _is_image_text_to_text(pipe_task):
+                    if chat_like:
+                        conversation = [
+                            {
+                                "role": "user",
+                                "content": [
+                                    {"type": "image"},
+                                    {"type": "text", "text": self.prompt or ""},
+                                ],
+                            }
+                        ]
+                        result = self.preloaded_pipeline(image, text=conversation)
+                    else:
+                        plain = (self.prompt or "")
+                        result = self.preloaded_pipeline(image, text=plain)
+                elif _is_image_to_text_task(pipe_task):
+                    result = self.preloaded_pipeline(image)
                 else:
                     full_prompt = self.prompt if self.prompt else ""
                     try:
-                        result = self.preloaded_pipeline(image, prompt=full_prompt)
+                        result = self.preloaded_pipeline(image, text=full_prompt)
                     except TypeError:
-                        try:
-                            result = self.preloaded_pipeline(image, text=full_prompt)
-                        except TypeError:
-                            result = self.preloaded_pipeline(image)
+                        result = self.preloaded_pipeline(image)
         
         elapsed = time.perf_counter() - start
         logger.info(f"Preloaded inference completed in {elapsed:.3f} seconds")
@@ -673,17 +842,80 @@ class VLMWorker(QThread):
             elif "answer" in result[0]:
                 answer = str(result[0]["answer"])
             else:
-                answer = str(result[0])
+                # Try to extract assistant content from a chat-style structure
+                assistant_text = None
+                try:
+                    for item in reversed(result):
+                        if isinstance(item, dict) and str(item.get("role", "")).lower() == "assistant":
+                            content = item.get("content")
+                            if isinstance(content, str):
+                                assistant_text = content
+                                break
+                            if isinstance(content, list):
+                                parts = []
+                                for frag in content:
+                                    if isinstance(frag, dict) and frag.get("type") == "text" and isinstance(frag.get("text"), str):
+                                        parts.append(frag.get("text"))
+                                if parts:
+                                    assistant_text = "\n".join(parts)
+                                    break
+                except Exception:
+                    assistant_text = None
+                answer = assistant_text if assistant_text is not None else str(result[0])
         else:
             answer = str(result)
         # Strip conversation markers if the model echoed the template (case-insensitive)
         try:
-            m = re.search(r"(?is)assistant:\s*", answer)
-            if m:
-                answer = answer[m.end():].lstrip()
+            markers = list(re.finditer(r"(?is)\bassistant\b\s*[:：>»\-]*\s*", answer))
+            if markers:
+                answer = answer[markers[-1].end():].lstrip()
+            else:
+                m = re.search(r"(?is)assistant:\s*", answer)
+                if m:
+                    answer = answer[m.end():].lstrip()
         except Exception:
             pass
-        
+        # If the answer looks like a serialized conversation, try to parse and extract assistant content
+        try:
+            s = answer.strip()
+            if (s.startswith("[") or s.startswith("{")) and ("role" in s and "content" in s):
+                parsed = None
+                try:
+                    parsed = json.loads(s)
+                except Exception:
+                    try:
+                        parsed = ast.literal_eval(s)
+                    except Exception:
+                        parsed = None
+                if isinstance(parsed, list):
+                    for item in reversed(parsed):
+                        if isinstance(item, dict) and str(item.get("role", "")).lower() == "assistant":
+                            content = item.get("content")
+                            if isinstance(content, str):
+                                answer = content
+                                break
+                            if isinstance(content, list):
+                                parts = []
+                                for frag in content:
+                                    if isinstance(frag, dict) and frag.get("type") == "text" and isinstance(frag.get("text"), str):
+                                        parts.append(frag.get("text"))
+                                if parts:
+                                    answer = "\n".join(parts)
+                                    break
+                elif isinstance(parsed, dict) and str(parsed.get("role", "")).lower() == "assistant":
+                    content = parsed.get("content")
+                    if isinstance(content, str):
+                        answer = content
+                    elif isinstance(content, list):
+                        parts = []
+                        for frag in content:
+                            if isinstance(frag, dict) and frag.get("type") == "text" and isinstance(frag.get("text"), str):
+                                parts.append(frag.get("text"))
+                        if parts:
+                            answer = "\n".join(parts)
+        except Exception:
+            pass
+        logger.debug(f"Preloaded normalized answer preview: {answer[:200]!r}")
         return answer, elapsed
 
     def run(self) -> None:  # noqa: D401
@@ -693,9 +925,23 @@ class VLMWorker(QThread):
             self.progress.emit(50)
             
             if self.preloaded_pipeline:
-                logger.info("Using preloaded pipeline for faster inference")
-                answer, elapsed = self.run_preloaded_inference()
-            else:
+                # Validate that preloaded pipeline matches expected task for this model
+                name_l = str(self.model_name).lower()
+                chat_like = any(s in name_l for s in [
+                    "llava", "onevision", "qwen", "qwen2", "qwen2.5", "cogvlm", "internvl", "fuyu", "minigpt", "instructblip"
+                ])
+                expected_task = "image-text-to-text" if (chat_like or self.task == "VQA") else "image-to-text"
+                actual_task = getattr(self.preloaded_pipeline, "task", None)
+                if actual_task and expected_task not in str(actual_task).lower():
+                    logger.warning(
+                        f"Preloaded pipeline task '{actual_task}' mismatches expected '{expected_task}'. "
+                        "Rebuilding pipeline on the fly for this request."
+                    )
+                    self.preloaded_pipeline = None
+                else:
+                    logger.info("Using preloaded pipeline for faster inference")
+                    answer, elapsed = self.run_preloaded_inference()
+            if not self.preloaded_pipeline:
                 logger.info("Loading model and running inference")
                 answer, elapsed = run_vlm_inference(
                     model_name=self.model_name,

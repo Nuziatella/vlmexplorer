@@ -16,7 +16,7 @@ from PySide6.QtGui import QIcon
 from dotenv import load_dotenv
 from app.gui.models_catalog import AVAILABLE_MODELS
 from app.gui.mixins.styles import StyleMixin
-from app.gui.mixins.server import ServerPageMixin
+from app.gui.mixins.server_mixin import ServerPageMixin
 from app.gui.mixins.statusbar import StatusBarMixin
 from app.gui.mixins.models import ModelsPageMixin
 from app.gui.mixins.chat import ChatPageMixin
