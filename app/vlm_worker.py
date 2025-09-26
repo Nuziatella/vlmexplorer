@@ -8,6 +8,7 @@ import os
 import contextlib
 import time
 import logging
+import re
 from typing import Any, Dict, Optional
 
 import torch
@@ -59,8 +60,7 @@ def run_vlm_inference(
     if cache_dir:
         os.environ["HF_HOME"] = cache_dir
     model_kwargs = {"cache_dir": cache_dir} if cache_dir else {}
-    # Prefer fast tokenizers to silence warnings
-    tokenizer_kwargs = {"cache_dir": cache_dir, "use_fast": True} if cache_dir else {"use_fast": True}
+    # Note: tokenizer kwargs are handled internally by pipelines; no explicit tokenizer_kwargs passed
 
     dtype = torch.float16 if (device != -1 and preprocess.get("use_fp16", False)) else None
     # Quantization configuration (bitsandbytes)
@@ -100,7 +100,6 @@ def run_vlm_inference(
             "model": model_name,
             "dtype": dtype,
             "model_kwargs": model_kwargs,
-            "tokenizer_kwargs": tokenizer_kwargs,
             "trust_remote_code": True,
         }
 
@@ -145,12 +144,12 @@ def run_vlm_inference(
             torch.autocast("cuda") if (device != -1 and preprocess.get("use_fp16", False)) else contextlib.nullcontext()
         ):
             if _is_image_text_task(pipe_task):
-                # For image-to-text models (including LLaVA), format prompt appropriately
-                if task == "VQA" and prompt:
-                    # Format as a conversation for VQA-style questions
-                    full_prompt = f"USER: {prompt}\nASSISTANT:"
-                else:
-                    full_prompt = prompt if prompt else ""
+                # For image-to-text models, pass the prompt directly (no chat wrappers)
+                full_prompt = prompt if prompt else ""
+                # Ensure image placeholder for models that require it (e.g., LLaVA variants)
+                try_model_name = str(model_name).lower()
+                if ("llava" in try_model_name or "onevision" in try_model_name) and ("<image" not in full_prompt):
+                    full_prompt = "<image>\n" + full_prompt
                 result = vlm_pipeline(image, prompt=full_prompt, generate_kwargs=gen_kwargs or None)
             elif pipe_task == "visual-question-answering":
                 # For dedicated VQA models
@@ -175,10 +174,10 @@ def run_vlm_inference(
             torch.autocast("cuda") if (device != -1 and preprocess.get("use_fp16", False)) else contextlib.nullcontext()
         ):
             if _is_image_text_task(pipe_task):
-                if task == "VQA" and prompt:
-                    full_prompt = f"USER: {prompt}\nASSISTANT:"
-                else:
-                    full_prompt = prompt if prompt else ""
+                full_prompt = prompt if prompt else ""
+                try_model_name = str(model_name).lower()
+                if ("llava" in try_model_name or "onevision" in try_model_name) and ("<image" not in full_prompt):
+                    full_prompt = "<image>\n" + full_prompt
                 result = vlm_pipeline(image, prompt=full_prompt)
             elif pipe_task == "visual-question-answering":
                 result = vlm_pipeline(image=image, question=prompt, top_k=answer_top_k)
@@ -186,21 +185,52 @@ def run_vlm_inference(
                 # Try with prompt first; fallback to image-only
                 try:
                     full_prompt = prompt if prompt else ""
+                    try_model_name = str(model_name).lower()
+                    if ("llava" in try_model_name or "onevision" in try_model_name) and ("<image" not in full_prompt):
+                        full_prompt = "<image>\n" + full_prompt
                     result = vlm_pipeline(image, prompt=full_prompt)
                 except TypeError:
                     result = vlm_pipeline(image)
     except Exception as e:
-        logger.error(f"Error during inference: {e}")
-        raise
-    
+        # Targeted retry for image-token mismatch errors: inject placeholder and retry once
+        if "Image features and image tokens do not match" in str(e):
+            logger.warning("Retrying with '<image>' placeholder injected due to token mismatch")
+            with torch.inference_mode(), (
+                torch.autocast("cuda") if (device != -1 and preprocess.get("use_fp16", False)) else contextlib.nullcontext()
+            ):
+                if _is_image_text_task(pipe_task):
+                    full_prompt = (prompt or "")
+                    if "<image" not in full_prompt:
+                        full_prompt = "<image>\n" + full_prompt
+                    try:
+                        result = vlm_pipeline(image, prompt=full_prompt, generate_kwargs=gen_kwargs or None)
+                    except Exception:
+                        result = vlm_pipeline(image, text=full_prompt, generate_kwargs=gen_kwargs or None)
+                else:
+                    raise
+        else:
+            logger.error(f"Error during inference: {e}")
+            raise
     elapsed = time.perf_counter() - start
     logger.info(f"Inference completed in {elapsed:.3f} seconds")
 
     # Normalize result to answer string
-    if isinstance(result, list) and result and isinstance(result[0], dict) and "answer" in result[0]:
-        answer = str(result[0]["answer"])
+    if isinstance(result, list) and result and isinstance(result[0], dict):
+        if "generated_text" in result[0]:
+            answer = str(result[0]["generated_text"])
+        elif "answer" in result[0]:
+            answer = str(result[0]["answer"])
+        else:
+            answer = str(result[0])
     else:
         answer = str(result)
+    # Strip conversation markers if present (case-insensitive)
+    try:
+        m = re.search(r"(?is)assistant:\s*", answer)
+        if m:
+            answer = answer[m.end():].lstrip()
+    except Exception:
+        pass
     return answer, elapsed
 
 
@@ -227,8 +257,6 @@ class ModelLoader(QThread):
         logger.info(f"ModelLoader starting for model: {self.model_name}")
         try:
             self.progress.emit(25)
-            
-            # Set up model loading parameters
             device = 0 if torch.cuda.is_available() else -1
             if self.cache_dir:
                 os.environ["HF_HOME"] = self.cache_dir
@@ -236,7 +264,7 @@ class ModelLoader(QThread):
             model_kwargs = {"cache_dir": self.cache_dir} if self.cache_dir else {}
             # Separate kwargs: processors typically don't need/use 'use_fast'
             processor_kwargs = {"cache_dir": self.cache_dir} if self.cache_dir else {}
-            tokenizer_kwargs = {"cache_dir": self.cache_dir, "use_fast": True} if self.cache_dir else {"use_fast": True}
+            # No explicit tokenizer kwargs passed to pipeline
             
             # Add quantization if specified
             if device != -1:
@@ -430,7 +458,6 @@ class ModelLoader(QThread):
                             "model": self.model_name,
                             "dtype": torch.float16 if (device != -1) else None,
                             "model_kwargs": model_kwargs,
-                            "tokenizer_kwargs": tokenizer_kwargs,
                             "trust_remote_code": True,
                         }
                         
@@ -458,7 +485,6 @@ class ModelLoader(QThread):
                     "model": self.model_name,
                     "dtype": torch.float16 if (device != -1) else None,
                     "model_kwargs": model_kwargs,
-                    "tokenizer_kwargs": tokenizer_kwargs,
                     "trust_remote_code": True,
                 }
                 
@@ -583,6 +609,9 @@ class VLMWorker(QThread):
                         full_prompt = f"USER: {self.prompt}\nASSISTANT:"
                     else:
                         full_prompt = self.prompt if self.prompt else ""
+                    # Ensure image placeholder for models that require it (e.g., LLaVA variants)
+                    if ("llava" in str(self.model_name).lower() or "onevision" in str(self.model_name).lower()) and ("<image" not in full_prompt):
+                        full_prompt = "<image>\n" + full_prompt
                     try:
                         result = self.preloaded_pipeline(image, prompt=full_prompt, generate_kwargs=gen_kwargs or None)
                     except (TypeError, ValueError):
@@ -616,6 +645,8 @@ class VLMWorker(QThread):
                         full_prompt = f"USER: {self.prompt}\nASSISTANT:"
                     else:
                         full_prompt = self.prompt if self.prompt else ""
+                    if ("llava" in str(self.model_name).lower() or "onevision" in str(self.model_name).lower()) and ("<image" not in full_prompt):
+                        full_prompt = "<image>\n" + full_prompt
                     try:
                         result = self.preloaded_pipeline(image, prompt=full_prompt)
                     except (TypeError, ValueError):
@@ -645,6 +676,13 @@ class VLMWorker(QThread):
                 answer = str(result[0])
         else:
             answer = str(result)
+        # Strip conversation markers if the model echoed the template (case-insensitive)
+        try:
+            m = re.search(r"(?is)assistant:\s*", answer)
+            if m:
+                answer = answer[m.end():].lstrip()
+        except Exception:
+            pass
         
         return answer, elapsed
 
