@@ -116,6 +116,23 @@ User Question: What should I do next?""",
         print(f"❌ Request failed: {e}")
         return False
 
+def test_server_metrics():
+    """Test the /metrics endpoint to verify counters and latency keys exist."""
+    try:
+        r = requests.get("http://127.0.0.1:8001/metrics", timeout=5)
+        assert r.status_code == 200, f"/metrics returned {r.status_code}"
+        m = r.json()
+        # Basic keys
+        for k in ["incoming", "succeeded", "failed", "avg_latency_ms", "last_latency_ms", "uptime_seconds"]:
+            assert k in m, f"Missing key in /metrics: {k}"
+        print("✅ /metrics keys present:")
+        print(f"   incoming={m['incoming']} succeeded={m['succeeded']} failed={m['failed']}")
+        print(f"   avg_latency_ms={m['avg_latency_ms']} last_latency_ms={m['last_latency_ms']} uptime={m['uptime_seconds']}")
+        return True
+    except Exception as e:
+        print(f"❌ /metrics test failed: {e}")
+        return False
+
 def main():
     """Run server tests."""
     print("🧪 VLM Server Integration Test")

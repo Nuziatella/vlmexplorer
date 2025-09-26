@@ -4,7 +4,8 @@ import threading
 import time
 
 import requests
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QPushButton, QMessageBox
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QMessageBox
+from PySide6.QtCore import QTimer
 
 
 class ServerPageMixin:
@@ -23,6 +24,28 @@ class ServerPageMixin:
         self.server_btn = QPushButton("🚀 Start Server")
         self.server_btn.clicked.connect(self.toggle_server)
         layout.addWidget(self.server_btn)
+
+        # Status and metrics area
+        self.server_label = QLabel("Server: Stopped")
+        layout.addWidget(self.server_label)
+
+        # Metrics rows
+        metrics_row1 = QHBoxLayout()
+        self.metrics_in_label = QLabel("Incoming: 0")
+        self.metrics_out_label = QLabel("Succeeded: 0 (Failed: 0)")
+        metrics_row1.addWidget(self.metrics_in_label)
+        metrics_row1.addWidget(self.metrics_out_label)
+        layout.addLayout(metrics_row1)
+
+        metrics_row2 = QHBoxLayout()
+        self.metrics_latency_label = QLabel("Latency (avg/last): - / - ms")
+        self.metrics_uptime_label = QLabel("Uptime: 0.0 s")
+        metrics_row2.addWidget(self.metrics_latency_label)
+        metrics_row2.addWidget(self.metrics_uptime_label)
+        layout.addLayout(metrics_row2)
+
+        # Start a timer placeholder (created on server start)
+        self.server_metrics_timer = None
 
         layout.addStretch()
         return page
@@ -69,10 +92,11 @@ class ServerPageMixin:
                 if response.status_code == 200:
                     # Update UI - server is confirmed running
                     self.server_btn.setText("🛑 Stop Server")
-                    if hasattr(self, "server_label"):
-                        self.server_label.setText(
-                            f"Server: Running on http://127.0.0.1:{self.server_port}"
-                        )
+                    self.server_label.setText(
+                        f"Server: Running on http://127.0.0.1:{self.server_port}"
+                    )
+                    # Start polling metrics periodically
+                    self.start_metrics_polling()
                     QMessageBox.information(
                         self,
                         "Server Started",
@@ -80,7 +104,8 @@ class ServerPageMixin:
                             f"FastAPI server started on http://127.0.0.1:{self.server_port}\n\n"
                             "Your Pokémon application can now connect to:\n"
                             f"• GET http://127.0.0.1:{self.server_port}/health - Check server status\n"
-                            f"• POST http://127.0.0.1:{self.server_port}/infer - Send images for analysis"
+                            f"• POST http://127.0.0.1:{self.server_port}/infer - Send images for analysis\n"
+                            f"• GET http://127.0.0.1:{self.server_port}/metrics - Server counters and latency"
                         ),
                     )
                 else:
@@ -113,7 +138,65 @@ class ServerPageMixin:
         if getattr(self, "server_thread", None):
             self.server_thread = None
 
+        # Stop metrics polling
+        self.stop_metrics_polling()
+
         # Update UI
         self.server_btn.setText("🚀 Start Server")
-        if hasattr(self, "server_label"):
-            self.server_label.setText("Server: Stopped")
+        self.server_label.setText("Server: Stopped")
+        self.metrics_in_label.setText("Incoming: 0")
+        self.metrics_out_label.setText("Succeeded: 0 (Failed: 0)")
+        self.metrics_latency_label.setText("Latency (avg/last): - / - ms")
+        self.metrics_uptime_label.setText("Uptime: 0.0 s")
+
+    # ------------------
+    # Metrics helpers
+    # ------------------
+    def start_metrics_polling(self):
+        """Begin polling /metrics periodically and updating labels."""
+        if self.server_metrics_timer is None:
+            self.server_metrics_timer = QTimer(self)
+            self.server_metrics_timer.setInterval(2000)  # 2 seconds
+            self.server_metrics_timer.timeout.connect(self.update_server_status)
+            self.server_metrics_timer.start()
+
+    def stop_metrics_polling(self):
+        """Stop polling /metrics."""
+        if self.server_metrics_timer is not None:
+            try:
+                self.server_metrics_timer.stop()
+            except Exception:
+                pass
+            self.server_metrics_timer = None
+
+    def update_server_status(self):
+        """Fetch /metrics and /health to update server labels."""
+        try:
+            base = f"http://127.0.0.1:{self.server_port}"
+            # Metrics
+            r = requests.get(f"{base}/metrics", timeout=1.0)
+            if r.status_code == 200 and isinstance(r.json(), dict):
+                m = r.json()
+                self.metrics_in_label.setText(f"Incoming: {m.get('incoming', 0)}")
+                self.metrics_out_label.setText(
+                    f"Succeeded: {m.get('succeeded', 0)} (Failed: {m.get('failed', 0)})"
+                )
+                avg = m.get('avg_latency_ms')
+                last = m.get('last_latency_ms')
+                avg_s = f"{avg:.1f}" if isinstance(avg, (int, float)) else "-"
+                last_s = f"{last:.1f}" if isinstance(last, (int, float)) else "-"
+                self.metrics_latency_label.setText(f"Latency (avg/last): {avg_s} / {last_s} ms")
+                up = m.get('uptime_seconds', 0.0)
+                self.metrics_uptime_label.setText(f"Uptime: {float(up):.1f} s")
+
+            # Health (optional) to set a quick status; do not block if metrics already OK
+            try:
+                h = requests.get(f"{base}/health", timeout=1.0)
+                if h.status_code == 200:
+                    self.server_label.setText(f"Server: Running on {base}")
+            except Exception:
+                pass
+
+        except Exception:
+            # If metrics fetch fails, keep previous values; optionally mark server as stopped
+            self.server_label.setText("Server: Unreachable")
