@@ -238,7 +238,22 @@ class InferenceMixin:
         ]).lower()
         wants_json = any(
             key in text_bundle
-            for key in ["json", "schema", "return a json", "output json", "as json", "in json"]
+            for key in [
+                "json",
+                "schema",
+                "return a json",
+                "return only json",
+                "json only",
+                "output json",
+                "as json",
+                "in json",
+                "json format",
+                "json-formatted",
+                "strict json",
+                "machine-readable json",
+                "provide json",
+                "provide a json",
+            ]
         )
 
         if wants_json:
